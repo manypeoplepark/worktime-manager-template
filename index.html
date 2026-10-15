@@ -131,6 +131,8 @@
   .mlbl { flex:1; text-align:center; font-size:10px; color:var(--muted); font-variant-numeric:tabular-nums; }
   .mlbl.q { color:var(--text); font-weight:600; }       /* 0/15/30/45분 강조 */
   .legendmini { font-size: 11px; color: var(--muted); margin-top: 6px; }
+  .guidebox { background:var(--panel-2); border:1px solid var(--line); border-radius:10px; padding:12px 13px; margin-bottom:12px; }
+  .promptbox { white-space:pre-wrap; font-size:11px; line-height:1.5; color:var(--muted); background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:9px 10px; margin:0; font-family:inherit; max-height:150px; overflow:auto; }
 
   /* week report */
   .weekbars { display: flex; gap: 10px; align-items: flex-end; height: 200px; padding-top: 10px; }
@@ -336,6 +338,22 @@
           <input type="number" id="usageAllow" step="0.5" min="0" />
         </label>
       </div>
+
+      <div class="guidebox">
+        <div style="font-weight:600;margin-bottom:5px">🤖 Claude로 자동 정리하기 (추천)</div>
+        <div class="note" style="margin-bottom:9px">
+          ① 위 "내 이름" 칸을 먼저 채우고 → ② <b>Claude(claude.ai)</b>에서 <b>구글 캘린더 커넥터</b>를 연결한 뒤
+          → ③ 아래 프롬프트를 복사해 Claude에 붙여넣으면, 연차 내역을 이 칸 형식으로 정리해줘요.
+          → ④ 그 결과를 복사해 아래 칸에 붙여넣고 <b>"연차 사용량 계산"</b>을 누르세요.
+        </div>
+        <div class="row" style="margin-bottom:8px">
+          <button class="btn sm" id="copyPrompt">📋 프롬프트 복사</button>
+          <button class="btn ghost sm" id="openClaude">Claude 열기 ↗</button>
+          <button class="btn ghost sm" id="openGCal2">📅 구글 캘린더 열기 ↗</button>
+        </div>
+        <pre id="promptPreview" class="promptbox"></pre>
+      </div>
+
       <label class="field" style="margin-bottom:10px">캘린더 일정 붙여넣기 (한 줄에 하나씩: 날짜·제목 아무 형식이나 OK)
         <textarea id="leaveText" rows="7" style="background:var(--panel-2);border:1px solid var(--line);color:var(--text);padding:10px;border-radius:9px;font-family:inherit;font-size:13px;resize:vertical"
           placeholder="예)&#10;2025-08-15 연차 : 홍길동&#10;2025-09-05 오전반차 : 홍길동&#10;2025-10-10 반차 홍길동&#10;2026-01-02 월차 : 홍길동, 김철수"></textarea>
@@ -414,7 +432,7 @@ const LS = {
 };
 const DEFAULTS = { hireDate:"", weekly:40, daily:8, startHour:6, endHour:24,
   myName:"", leaveStart:"", allowance:15, leaveText:"" };
-// 공유용: 연차 내역 비움 (각자 자신의 일정을 붙여넣어 사용)
+// 구글 캘린더(W.CAMP)에서 읽어온 홍길동 연차 내역 기본값 (2025-07 ~ 2026-10)
 const DEFAULT_LEAVE_TEXT = "";
 let settings = Object.assign({}, DEFAULTS, LS.get("wtm_settings", {}));
 let blocks = LS.get("wtm_blocks", {}); // { 'YYYY-MM-DD': { '08:00':'work', ... } }
@@ -883,6 +901,40 @@ function renderUsage(){
 document.getElementById("openGCal").onclick = ()=>{
   window.open("https://calendar.google.com/calendar/u/0/r", "_blank");
 };
+document.getElementById("openGCal2").onclick = ()=>{
+  window.open("https://calendar.google.com/calendar/u/0/r", "_blank");
+};
+document.getElementById("openClaude").onclick = ()=>{
+  window.open("https://claude.ai/new", "_blank");
+};
+// Claude에 붙여넣을 프롬프트 생성 (이름/시작일 반영)
+function buildClaudePrompt(){
+  const name = ((document.getElementById("usageName").value||"").trim()) || "[내 이름]";
+  const start = (document.getElementById("usageStart").value||"").trim();
+  const period = start ? `${start}부터 오늘까지` : "올해 1월(또는 입사일) 이후부터 오늘까지";
+  return `내 구글 캘린더에서 '${name}'의 연차 일정을 정리해줘.\n`
+    + `기간: ${period}.\n`
+    + `제목에 '연차 / 오전반차 / 오후반차 / 반차 / 월차 / 공동연차' 키워드가 들어가고 '${name}'과(와) 관련된 일정만 찾아서,\n`
+    + `아래 형식으로 한 줄에 하나씩, 날짜 오름차순으로 정리해줘 (설명·표 없이 목록만):\n\n`
+    + `YYYY-MM-DD 구분 : ${name}\n`
+    + `예) 2025-10-02 월차 : ${name}`;
+}
+function refreshPrompt(){ const el=document.getElementById("promptPreview"); if(el) el.textContent=buildClaudePrompt(); }
+function copyToClipboard(txt, btn){
+  const done=()=>{ if(btn){ const t=btn.textContent; btn.textContent="✅ 복사됨"; setTimeout(()=>btn.textContent=t,1500);} };
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(txt).then(done).catch(()=>fallbackCopy(txt,done));
+  } else fallbackCopy(txt,done);
+}
+function fallbackCopy(txt, done){
+  const ta=document.createElement("textarea"); ta.value=txt; ta.style.position="fixed"; ta.style.opacity="0";
+  document.body.appendChild(ta); ta.select();
+  try{ document.execCommand("copy"); done&&done(); }catch(e){}
+  document.body.removeChild(ta);
+}
+document.getElementById("copyPrompt").onclick = ()=> copyToClipboard(buildClaudePrompt(), document.getElementById("copyPrompt"));
+document.getElementById("usageName").addEventListener("input", refreshPrompt);
+document.getElementById("usageStart").addEventListener("input", refreshPrompt);
 document.getElementById("calcUsage").onclick = ()=>{
   settings.myName = document.getElementById("usageName").value;
   settings.leaveStart = document.getElementById("usageStart").value;
@@ -899,6 +951,7 @@ function renderLeave(){
   document.getElementById("usageAllow").value = settings.allowance;
   document.getElementById("leaveText").value = settings.leaveText||"";
   renderUsage();
+  refreshPrompt();
 
   const r = calcLeave(settings.hireDate);
   const stats=document.getElementById("leaveStats");
