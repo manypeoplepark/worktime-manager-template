@@ -4,6 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>근무시간 · 연차 매니저</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%23f5c518'/><circle cx='50' cy='53' r='27' fill='none' stroke='%231a1a1a' stroke-width='8'/><path d='M50 53 L50 34 M50 53 L65 60' stroke='%231a1a1a' stroke-width='8' stroke-linecap='round'/></svg>" />
 <link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
 <style>
   :root, html[data-theme="dark"] {
@@ -125,8 +126,7 @@
   .blk.break { background: var(--break); border-color: var(--break); }
   .blk.leave { background: var(--leave); border-color: var(--leave); }
   .blk:hover { filter: brightness(1.2); }
-  .blk.lunch, .wcell.lunch { cursor: default; opacity: .6; }
-  .blk.lunch:hover { filter: none; }
+  .blk.lunch, .wcell.lunch { opacity: .5; }
   .minhead { margin-bottom: 6px; }
   .mlbl { flex:1; text-align:center; font-size:10px; color:var(--muted); font-variant-numeric:tabular-nums; }
   .mlbl.q { color:var(--text); font-weight:600; }       /* 0/15/30/45분 강조 */
@@ -244,7 +244,7 @@
         <div class="pal" data-mode="leave"><span class="dot leave"></span>연차</div>
         <div class="pal" data-mode="erase"><span class="dot erase"></span>지우기</div>
         <span class="spacer"></span>
-        <span class="legendmini">블럭을 클릭/드래그해서 칠하세요 · 한 칸 = 5분 · 다시 누르면 취소 · 12~13시 점심 고정</span>
+        <span class="legendmini">블럭을 클릭/드래그해서 칠하세요 · 한 칸 = 5분 · 다시 누르면 취소 · 12~13시는 점심(기본 휴게, 일했으면 덮어쓰기 가능)</span>
       </div>
 
       <!-- 일간 -->
@@ -367,17 +367,20 @@
     </div>
 
     <div class="card">
-      <h2>연차 발생 현황 <span class="pill">입사일 기준</span></h2>
+      <h2>연차 발생 현황 <span class="pill" id="leaveBasisPill">회계연도 기준</span></h2>
       <div class="stats" id="leaveStats" style="margin-bottom:16px"></div>
       <table class="leave" id="leaveTable"></table>
     </div>
     <div class="card">
       <h2>계산 기준 안내</h2>
       <div class="note">
-        · <b>입사 1년 미만</b>: 1개월 개근 시 1일씩 발생 (최대 11일). 개근했다고 가정해 계산합니다.<br>
-        · <b>입사 1년 이상</b>: 기본 15일.<br>
-        · <b>3년 이상 근속</b>: 매 2년마다 1일 가산 (총 한도 <b>25일</b>).<br>
-        · 회사가 <b>회계연도 기준</b>을 쓰면 실제 부여일수가 달라질 수 있어요. 정확한 사용 가능 일수는 회사 인사팀/근태시스템을 확인하세요. (이 계산기는 법정 최소 기준의 참고용입니다.)
+        발생 기준은 <b>설정 탭</b>에서 바꿀 수 있어요 (기본: <b>회계연도</b>).<br>
+        <b>■ 회계연도 기준 (1/1~12/31)</b><br>
+        · <b>입사한 해</b>: 1개월 개근 시 1일씩 (최대 11일)<br>
+        · <b>다음 해 1/1</b>: 15일 × (입사연도 재직일수 ÷ 365) 비례 부여<br>
+        · <b>그 다음 해부터</b>: 매년 15일, 3년 이상 근속 시 2년마다 +1 (최대 25일)<br>
+        <b>■ 입사일 기준</b>: 입사기념일마다 갱신 (1년 미만 월 1일, 1년↑ 15일, 3년↑ 2년당 +1)<br>
+        ※ 회사·규정마다 비례·가산 방식이 조금씩 다를 수 있어요. <b>정확한 일수는 인사팀/근태시스템</b>을 확인하고, 실제 값은 위 "사용 가능 연차" 칸에 직접 넣어 쓰면 됩니다.
       </div>
     </div>
   </section>
@@ -389,6 +392,12 @@
       <div class="row">
         <label class="field">입사일
           <input type="date" id="setHireDate" />
+        </label>
+        <label class="field">연차 발생 기준
+          <select id="setBasis">
+            <option value="fiscal">회계연도 (1/1)</option>
+            <option value="hire">입사일 기준</option>
+          </select>
         </label>
         <label class="field">주 소정근로시간 (법정 40h)
           <input type="number" id="setWeekly" min="0" max="68" step="1" />
@@ -431,7 +440,8 @@ const LS = {
   set(k, v){ localStorage.setItem(k, JSON.stringify(v)); }
 };
 const DEFAULTS = { hireDate:"", weekly:40, daily:8, startHour:6, endHour:24,
-  myName:"", leaveStart:"", allowance:15, leaveText:"" };
+  myName:"", leaveStart:"", allowance:15, leaveText:"",
+  leaveBasis:"fiscal" };   // fiscal=회계연도(1/1) · hire=입사일 기준
 // 구글 캘린더(W.CAMP)에서 읽어온 홍길동 연차 내역 기본값 (2025-07 ~ 2026-10)
 const DEFAULT_LEAVE_TEXT = "";
 let settings = Object.assign({}, DEFAULTS, LS.get("wtm_settings", {}));
@@ -452,24 +462,25 @@ function slotKey(h,m){ return `${pad(h)}:${pad(m)}`; }
 function minutesToHm(min){ const h=Math.floor(min/60), m=min%60; return `${h}시간 ${m}분`; }
 function minutesToHmShort(min){ const h=Math.floor(min/60), m=min%60; return m? `${h}.${Math.round(m/6)}h` : `${h}h`; }
 
-/* 하루 근무/회의 분 계산 (휴게 제외) */
+/* 하루 근무/회의 분 계산 (입력한 그대로 집계) */
 function workedMinutes(dateStr){
   const day = blocks[dateStr] || {};
   let count = 0;
-  const lunchPrefix = pad(LUNCH_HOUR)+":";
-  for(const k in day){ if((day[k]==="work" || day[k]==="meeting") && !k.startsWith(lunchPrefix)) count++; }
+  for(const k in day){ if(day[k]==="work" || day[k]==="meeting") count++; }
   return count*SLOT_MIN;
 }
 function leaveMinutes(dateStr){
   const day = blocks[dateStr] || {};
-  const lunchPrefix = pad(LUNCH_HOUR)+":";
-  return Object.keys(day).filter(k=>day[k]==="leave" && !k.startsWith(lunchPrefix)).length*SLOT_MIN;
+  return Object.keys(day).filter(k=>day[k]==="leave").length*SLOT_MIN;
 }
 function breakMinutes(dateStr){
   const day = blocks[dateStr] || {};
   const lunchPrefix = pad(LUNCH_HOUR)+":";
-  let c=0; for(const k in day){ if(day[k]==="break" && !k.startsWith(lunchPrefix)) c++; }
-  return c*SLOT_MIN + 60; // 고정 점심 1시간
+  let c=0, lunchSet=0;
+  for(const k in day){ if(day[k]==="break") c++; if(k.startsWith(lunchPrefix)) lunchSet++; }
+  // 점심(12~13시) 중 아직 입력 안 한 칸은 기본 휴게로 간주 (입력하면 그 값 우선)
+  const virtualLunch = Math.max(0, (60/SLOT_MIN) - lunchSet);
+  return (c + virtualLunch)*SLOT_MIN;
 }
 
 /* ---------------- 탭 ---------------- */
@@ -544,8 +555,10 @@ function renderGrid(){
     for(let h=settings.startHour; h<settings.endHour; h++){
       const key = slotKey(h,m);
       const blk = document.createElement("div"); blk.className="blk"; blk.dataset.key=key; blk.title=key;
-      if(h===LUNCH_HOUR){ blk.classList.add("break","lunch"); blk.title=key+" · 점심(고정)"; }
-      else { const v = day[key]; if(v) blk.classList.add(v); attachPaint(blk, currentDate, key); }
+      const v = day[key];
+      if(v){ blk.classList.add(v); }
+      else if(h===LUNCH_HOUR){ blk.classList.add("break","lunch"); blk.title=key+" · 점심(기본, 수정 가능)"; }
+      attachPaint(blk, currentDate, key);
       wrap.appendChild(blk);
     }
     row.appendChild(wrap); grid.appendChild(row);
@@ -596,8 +609,10 @@ function renderWeekView(){
       for(let m=0; m<60; m+=SLOT_MIN){
         const key = slotKey(h,m);
         const cell = document.createElement("div"); cell.className="wcell";
-        if(h===LUNCH_HOUR){ cell.classList.add("break","lunch"); }
-        else { const t = dayData[key]; if(t) cell.classList.add(t); attachPaint(cell, ds, key); }
+        const t = dayData[key];
+        if(t){ cell.classList.add(t); }
+        else if(h===LUNCH_HOUR){ cell.classList.add("break","lunch"); }
+        attachPaint(cell, ds, key);
         hr.appendChild(cell);
       }
       col.appendChild(hr);
@@ -826,25 +841,56 @@ function calcLeave(hireStr, refDate){
   if(!hireStr) return null;
   const hire=parseDate(hireStr); const now=refDate||new Date();
   if(now<hire) return null;
-  // 근속 연수(만)
+  // 근속 연수/개월 (만)
   let years = now.getFullYear()-hire.getFullYear();
   const anniv = new Date(now.getFullYear(), hire.getMonth(), hire.getDate());
   if(now < anniv) years--;
-  // 근속 개월(만)
   let months = (now.getFullYear()-hire.getFullYear())*12 + (now.getMonth()-hire.getMonth());
   if(now.getDate() < hire.getDate()) months--;
 
-  let result = { years, months, annual:0, monthlyAccrued:0, type:"" };
-  if(years < 1){
-    result.monthlyAccrued = Math.min(11, Math.max(0, months)); // 1개월 개근당 1일, 최대 11
-    result.type="1년미만";
-    result.annual = result.monthlyAccrued;
+  const basis = settings.leaveBasis || "fiscal";
+  let result = { years, months, basis, annual:0, monthlyAccrued:0, add:0, type:"", detail:"" };
+
+  if(basis === "fiscal"){
+    // 회계연도 1/1 기준
+    const hireYear = hire.getFullYear(), curYear = now.getFullYear();
+    if(curYear === hireYear){
+      // 입사 첫 해: 1개월 개근 1일 (최대 11)
+      result.monthlyAccrued = Math.min(11, Math.max(0, months));
+      result.annual = result.monthlyAccrued;
+      result.type = "입사연도 (월 비례)";
+      result.detail = "1개월 개근 시 1일씩 발생 (최대 11일)";
+    } else if(curYear === hireYear + 1){
+      // 다음 회계연도: 입사연도 재직비율만큼 비례 부여
+      const yEnd = new Date(hireYear, 11, 31);
+      const daysWorked = Math.round((yEnd - hire)/(1000*60*60*24)) + 1;
+      const prop = Math.round(15 * daysWorked/365 * 10)/10;
+      result.annual = prop;
+      result.type = "회계연도 비례 (2년차)";
+      result.detail = `15일 × (입사연도 재직 ${daysWorked}일 ÷ 365) ≈ ${prop}일`;
+    } else {
+      // 정기: 15일 + 근속가산
+      const sv = curYear - hireYear;                 // 회계연도 근속(년)
+      const add = Math.min(10, Math.max(0, Math.floor((sv-1)/2)));
+      result.add = add;
+      result.annual = Math.min(25, 15 + add);
+      result.type = "회계연도 정기";
+      result.detail = add>0 ? `기본 15일 + 근속가산 ${add}일` : "기본 15일";
+    }
   } else {
-    let add = Math.floor((years-1)/2); // 3년차부터 2년마다 +1 → (years-1)/2 내림
-    let total = Math.min(25, 15+add);
-    result.annual = total;
-    result.add = Math.min(10, add);
-    result.type="1년이상";
+    // 입사일(입사기념일) 기준
+    if(years < 1){
+      result.monthlyAccrued = Math.min(11, Math.max(0, months));
+      result.annual = result.monthlyAccrued;
+      result.type = "입사 1년 미만";
+      result.detail = "1개월 개근 시 1일씩 발생 (최대 11일)";
+    } else {
+      const add = Math.min(10, Math.floor((years-1)/2));
+      result.add = add;
+      result.annual = Math.min(25, 15 + add);
+      result.type = "입사 1년 이상";
+      result.detail = add>0 ? `기본 15일 + 근속가산 ${add}일` : "기본 15일";
+    }
   }
   return result;
 }
@@ -961,34 +1007,33 @@ function renderLeave(){
     tbl.innerHTML=""; return;
   }
   const hire=parseDate(settings.hireDate);
-  const nextAnniv=new Date(hire);
   const now=new Date();
-  nextAnniv.setFullYear(now.getFullYear());
-  if(nextAnniv<now) nextAnniv.setFullYear(now.getFullYear()+1);
-  const daysToAnniv=Math.ceil((nextAnniv-now)/(1000*60*60*24));
+  // 다음 갱신일 (회계연도=내년 1/1, 입사일=다음 입사기념일)
+  let nextLabel, daysToNext;
+  if(r.basis==="fiscal"){
+    const nj=new Date(now.getFullYear()+1,0,1);
+    daysToNext=Math.ceil((nj-now)/(1000*60*60*24));
+    nextLabel="다음 회계연도까지";
+  } else {
+    const na=new Date(now.getFullYear(),hire.getMonth(),hire.getDate());
+    if(na<now) na.setFullYear(now.getFullYear()+1);
+    daysToNext=Math.ceil((na-now)/(1000*60*60*24));
+    nextLabel="다음 입사기념일까지";
+  }
+  const basisName = r.basis==="fiscal" ? "회계연도(1/1)" : "입사일";
+  const pill=document.getElementById("leaveBasisPill"); if(pill) pill.textContent=basisName+" 기준";
 
   stats.innerHTML=`
-    <div class="stat"><div class="k">현재 발생 연차</div><div class="v good">${r.annual}일</div></div>
+    <div class="stat"><div class="k">올해 발생 연차(참고)</div><div class="v good">${r.annual}일</div></div>
     <div class="stat"><div class="k">근속 기간</div><div class="v" style="font-size:18px">${r.years}년 ${r.months - r.years*12}개월</div></div>
-    <div class="stat"><div class="k">구분</div><div class="v" style="font-size:16px">${r.type==="1년미만"?"입사 1년 미만":"입사 1년 이상"}</div></div>
-    <div class="stat"><div class="k">다음 입사기념일까지</div><div class="v" style="font-size:18px">D-${daysToAnniv}</div></div>
+    <div class="stat"><div class="k">구분</div><div class="v" style="font-size:14px">${r.type}</div></div>
+    <div class="stat"><div class="k">${nextLabel}</div><div class="v" style="font-size:18px">D-${daysToNext}</div></div>
   `;
 
-  // 향후 발생 예상 테이블
   let rows=`<tr><td style="color:var(--muted)">입사일</td><td>${settings.hireDate}</td></tr>`;
-  if(r.type==="1년미만"){
-    rows+=`<tr><td>1개월 개근 시마다 (최대 11일)</td><td>${r.monthlyAccrued} / 11일</td></tr>`;
-    rows+=`<tr><td>1년 도달 시</td><td>15일</td></tr>`;
-  } else {
-    rows+=`<tr><td>기본</td><td>15일</td></tr>`;
-    if(r.add>0) rows+=`<tr><td>근속 가산 (3년↑ 2년당 +1)</td><td>+${r.add}일</td></tr>`;
-  }
-  // 미래 예측 5개
-  for(let y=Math.max(1,r.years+1); y<=Math.max(1,r.years)+5 && y<=21; y++){
-    let add=Math.min(10,Math.floor((y-1)/2));
-    const d=new Date(hire); d.setFullYear(hire.getFullYear()+y);
-    rows+=`<tr><td style="color:var(--muted)">${fmtDate(d)} (근속 ${y}년차)</td><td>${Math.min(25,15+add)}일</td></tr>`;
-  }
+  rows+=`<tr><td style="color:var(--muted)">발생 기준</td><td>${basisName}</td></tr>`;
+  rows+=`<tr><td>올해 발생 연차</td><td>${r.annual}일</td></tr>`;
+  rows+=`<tr><td style="color:var(--muted)">산정 방식</td><td style="font-weight:400;text-align:right">${r.detail}</td></tr>`;
   tbl.innerHTML=rows;
 }
 
@@ -1001,6 +1046,7 @@ function fillHourSelects(){
 }
 function loadSettingsForm(){
   document.getElementById("setHireDate").value=settings.hireDate||"";
+  document.getElementById("setBasis").value=settings.leaveBasis||"fiscal";
   document.getElementById("setWeekly").value=settings.weekly;
   document.getElementById("setDaily").value=settings.daily;
   document.getElementById("setStart").value=settings.startHour;
@@ -1008,6 +1054,7 @@ function loadSettingsForm(){
 }
 document.getElementById("saveSettings").onclick=()=>{
   settings.hireDate=document.getElementById("setHireDate").value;
+  settings.leaveBasis=document.getElementById("setBasis").value;
   settings.weekly=parseFloat(document.getElementById("setWeekly").value)||40;
   settings.daily=parseFloat(document.getElementById("setDaily").value)||8;
   settings.startHour=parseInt(document.getElementById("setStart").value);
