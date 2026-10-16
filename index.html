@@ -1269,7 +1269,7 @@ function renderExpense(){
     if(t.dataset.photo){ openPhoto({mode:"attach",kind:t.dataset.photo,idx:+t.dataset.idx,ocr:true}); return; }
     if(t.dataset.view){ const r=getExp()[t.dataset.view==="item"?"items":"transport"][+t.dataset.idx]; const src=r&&r.imgs&&r.imgs[+t.dataset.ii]; if(src){ const w=window.open(); if(w) w.document.write(`<title>영수증</title><body style="margin:0;background:#111"><img src="${src}" style="max-width:100%"></body>`); } return; }
   });
-  el.addEventListener("change",ev=>{ if(ev.target.dataset && ev.target.dataset.field==="date") renderExpTables(); });
+  el.addEventListener("focusout",ev=>{ if(ev.target.dataset && ev.target.dataset.field==="date") renderExpTables(); });
 });
 document.getElementById("expMonth").onchange=e=>{ expMonth=e.target.value||ymNow(); renderExpense(); };
 document.getElementById("expName").oninput=e=>{ getExp().name=e.target.value; saveExpenses(); };
