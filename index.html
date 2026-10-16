@@ -6,6 +6,7 @@
 <title>근무시간 · 연차 매니저</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%23f5c518'/><circle cx='50' cy='53' r='27' fill='none' stroke='%231a1a1a' stroke-width='8'/><path d='M50 53 L50 34 M50 53 L65 60' stroke='%231a1a1a' stroke-width='8' stroke-linecap='round'/></svg>" />
 <link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
+<script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
 <style>
   :root, html[data-theme="dark"] {
     color-scheme: dark;
@@ -134,6 +135,17 @@
   .legendmini { font-size: 11px; color: var(--muted); margin-top: 6px; }
   .guidebox { background:var(--panel-2); border:1px solid var(--line); border-radius:10px; padding:12px 13px; margin-bottom:12px; }
   .promptbox { white-space:pre-wrap; font-size:11px; line-height:1.5; color:var(--muted); background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:9px 10px; margin:0; font-family:inherit; max-height:150px; overflow:auto; }
+  /* 개인비용 */
+  .exphd { font-size:13px; font-weight:700; margin:0 0 8px; }
+  .exptable { width:100%; border-collapse:collapse; font-size:12px; min-width:720px; }
+  .exptable th { background:var(--panel-2); color:var(--muted); font-weight:600; font-size:11px; padding:6px; border:1px solid var(--line); white-space:nowrap; }
+  .exptable td { border:1px solid var(--line); padding:3px; }
+  .exptable td.num { width:38px; text-align:center; color:var(--muted); }
+  .exptable input { width:100%; background:transparent; border:0; color:var(--text); font-size:12px; padding:5px 4px; font-family:inherit; }
+  .exptable input:focus { outline:1px solid var(--accent); border-radius:4px; }
+  .exptable input[type=number]{ text-align:right; }
+  .exptable .del { cursor:pointer; color:var(--over); text-align:center; width:32px; user-select:none; font-weight:700; }
+  .exptable tfoot td { background:var(--panel-2); font-weight:700; }
 
   /* week report */
   .weekbars { display: flex; gap: 10px; align-items: flex-end; height: 200px; padding-top: 10px; }
@@ -211,6 +223,7 @@
     <button data-tab="track" class="active">🧱 타임블럭</button>
     <button data-tab="report">📊 주간 리포트</button>
     <button data-tab="leave">🌴 연차 계산기</button>
+    <button data-tab="expense">💳 개인비용</button>
     <button data-tab="settings">⚙️ 설정</button>
   </nav>
 
@@ -386,6 +399,41 @@
     </div>
   </section>
 
+  <!-- ===== 개인비용 ===== -->
+  <section class="view" id="view-expense">
+    <div class="card">
+      <h2>💳 개인비용 청구 <span class="pill">엑셀 양식</span></h2>
+      <div class="row" style="margin-bottom:12px">
+        <label class="field">청구 월<input type="month" id="expMonth" /></label>
+        <label class="field">부서<input type="text" id="expDept" placeholder="더블유캠프" /></label>
+        <label class="field">성명<input type="text" id="expName" placeholder="이름" /></label>
+        <span class="spacer"></span>
+        <button class="btn sm" id="expSave">💾 저장</button>
+        <button class="btn" id="expExport">📊 엑셀 내보내기</button>
+      </div>
+      <div class="stats" id="expStats" style="margin-bottom:16px"></div>
+
+      <div class="exphd">개인 및 업무비용</div>
+      <div style="overflow-x:auto"><table class="exptable" id="expItems"></table></div>
+      <button class="btn ghost sm" id="addItem" style="margin-top:8px">+ 행 추가</button>
+
+      <div class="exphd" style="margin-top:20px">교통비</div>
+      <div style="overflow-x:auto"><table class="exptable" id="expTransport"></table></div>
+      <button class="btn ghost sm" id="addTransport" style="margin-top:8px">+ 행 추가</button>
+    </div>
+    <div class="card">
+      <div class="note">
+        · 월별로 입력하면 자동 저장돼요 (청구 월을 바꾸면 그 달 내역으로 전환).<br>
+        · <b>"엑셀 내보내기"</b>를 누르면 회사 양식(부서·성명·결재란·비용계·교통비계·총계)대로 <b>.xlsx 파일</b>이 받아져요.<br>
+        · 금액은 숫자만 입력하세요 (쉼표·원 자동 처리). 사용일자는 달력에서 선택.
+      </div>
+    </div>
+  </section>
+
+  <datalist id="dlPay"><option value="개인카드"><option value="법인카드"><option value="현금"><option value="계좌이체"></datalist>
+  <datalist id="dlCat"><option value="야근식비"><option value="야근교통비"><option value="식대"><option value="비품"><option value="소모품"><option value="기타"></datalist>
+  <datalist id="dlMode"><option value="택시"><option value="버스"><option value="지하철"><option value="KTX"><option value="자가용"><option value="기타"></datalist>
+
   <!-- ===== 설정 ===== -->
   <section class="view" id="view-settings">
     <div class="card">
@@ -498,6 +546,7 @@ document.querySelectorAll("nav.tabs button").forEach(b=>{
     document.getElementById("view-"+b.dataset.tab).classList.add("active");
     if(b.dataset.tab==="report") renderWeek();
     if(b.dataset.tab==="leave") renderLeave();
+    if(b.dataset.tab==="expense") renderExpense();
   };
 });
 
@@ -1112,6 +1161,114 @@ document.getElementById("themeToggle").onclick = ()=>{
   applyTheme(cur==="dark" ? "light" : "dark");
 };
 applyTheme(LS.get("wtm_theme","dark"));
+
+/* ---------------- 개인비용 ---------------- */
+let expenses = LS.get("wtm_expenses", {});
+function ymNow(){ const d=new Date(); return `${d.getFullYear()}-${pad(d.getMonth()+1)}`; }
+let expMonth = ymNow();
+function blankExp(){ return { dept:"더블유캠프", name:(settings.myName||""), items:[], transport:[] }; }
+function getExp(){ if(!expenses[expMonth]) expenses[expMonth]=blankExp(); return expenses[expMonth]; }
+function saveExpenses(){ LS.set("wtm_expenses", expenses); }
+function won(n){ return (Number(n)||0).toLocaleString("ko-KR"); }
+function fmtXlDate(d){ if(!d) return ""; const p=String(d).split("-"); return p.length===3? `${+p[1]}/${+p[2]}/${p[0]}` : d; }
+const ITEM_COLS=[{f:"pay",h:"결제구분",list:"dlPay"},{f:"cat",h:"항목",list:"dlCat"},{f:"date",h:"사용일자",type:"date"},{f:"vendor",h:"사용거래처"},{f:"desc",h:"사용내역"},{f:"amount",h:"금액",type:"number"}];
+const TR_COLS=[{f:"pay",h:"결제구분",list:"dlPay"},{f:"mode",h:"이용수단",list:"dlMode"},{f:"date",h:"사용일자",type:"date"},{f:"from",h:"출발지"},{f:"to",h:"도착지"},{f:"work",h:"업무사항"},{f:"fare",h:"요금",type:"number"}];
+function expRowHtml(cols,row,kind,idx){
+  let tds=`<td class="num">${idx+1}</td>`;
+  for(const c of cols){
+    const v=(row[c.f]!=null?row[c.f]:""); const a=`data-kind="${kind}" data-idx="${idx}" data-field="${c.f}"`;
+    if(c.type==="date") tds+=`<td><input type="date" ${a} value="${v}"></td>`;
+    else if(c.type==="number") tds+=`<td><input type="number" min="0" step="1" ${a} value="${v}"></td>`;
+    else tds+=`<td><input type="text" list="${c.list||''}" ${a} value="${String(v).replace(/"/g,'&quot;')}"></td>`;
+  }
+  tds+=`<td class="del" data-del="${kind}" data-idx="${idx}" title="삭제">✕</td>`;
+  return `<tr>${tds}</tr>`;
+}
+function expSums(){ const e=getExp(); return { isum:e.items.reduce((s,r)=>s+(Number(r.amount)||0),0), tsum:e.transport.reduce((s,r)=>s+(Number(r.fare)||0),0) }; }
+function updateExpTotals(){
+  const {isum,tsum}=expSums(); const e=getExp();
+  const a=document.querySelector("#expItems .sumcell"); if(a) a.textContent=won(isum);
+  const b=document.querySelector("#expTransport .sumcell"); if(b) b.textContent=won(tsum);
+  document.getElementById("expStats").innerHTML=`
+    <div class="stat"><div class="k">비용 계</div><div class="v">${won(isum)}<small> 원</small></div></div>
+    <div class="stat"><div class="k">교통비 계</div><div class="v">${won(tsum)}<small> 원</small></div></div>
+    <div class="stat"><div class="k">총 계</div><div class="v good">${won(isum+tsum)}<small> 원</small></div></div>
+    <div class="stat"><div class="k">내역 건수</div><div class="v">${e.items.length+e.transport.length}<small> 건</small></div></div>`;
+}
+function renderExpTables(){
+  const e=getExp();
+  const ibody=e.items.map((r,i)=>expRowHtml(ITEM_COLS,r,"item",i)).join("") || `<tr><td class="num">-</td><td colspan="${ITEM_COLS.length+1}" style="color:var(--muted);padding:8px">아래 "+ 행 추가"로 입력하세요</td></tr>`;
+  document.getElementById("expItems").innerHTML=
+    `<thead><tr><th>#</th>${ITEM_COLS.map(c=>`<th>${c.h}</th>`).join("")}<th></th></tr></thead><tbody>${ibody}</tbody>`+
+    `<tfoot><tr><td colspan="${ITEM_COLS.length}" style="text-align:right">비용 계</td><td class="sumcell" style="text-align:right"></td><td></td></tr></tfoot>`;
+  const tbody=e.transport.map((r,i)=>expRowHtml(TR_COLS,r,"transport",i)).join("") || `<tr><td class="num">-</td><td colspan="${TR_COLS.length+1}" style="color:var(--muted);padding:8px">아래 "+ 행 추가"로 입력하세요</td></tr>`;
+  document.getElementById("expTransport").innerHTML=
+    `<thead><tr><th>#</th>${TR_COLS.map(c=>`<th>${c.h}</th>`).join("")}<th></th></tr></thead><tbody>${tbody}</tbody>`+
+    `<tfoot><tr><td colspan="${TR_COLS.length}" style="text-align:right">교통비 계</td><td class="sumcell" style="text-align:right"></td><td></td></tr></tfoot>`;
+  updateExpTotals();
+}
+function renderExpense(){
+  document.getElementById("expMonth").value=expMonth;
+  const e=getExp();
+  document.getElementById("expDept").value=e.dept||"";
+  document.getElementById("expName").value=e.name||"";
+  renderExpTables();
+}
+["expItems","expTransport"].forEach(id=>{
+  const el=document.getElementById(id);
+  el.addEventListener("input",ev=>{
+    const t=ev.target, kind=t.dataset.kind; if(!kind) return;
+    const row=getExp()[kind==="item"?"items":"transport"][+t.dataset.idx]; if(!row) return;
+    row[t.dataset.field]= t.type==="number" ? (t.value===""?"":Number(t.value)) : t.value;
+    saveExpenses(); updateExpTotals();
+  });
+  el.addEventListener("click",ev=>{
+    const d=ev.target.dataset.del; if(!d) return;
+    getExp()[d==="item"?"items":"transport"].splice(+ev.target.dataset.idx,1);
+    saveExpenses(); renderExpTables();
+  });
+});
+document.getElementById("expMonth").onchange=e=>{ expMonth=e.target.value||ymNow(); renderExpense(); };
+document.getElementById("expDept").oninput=e=>{ getExp().dept=e.target.value; saveExpenses(); };
+document.getElementById("expName").oninput=e=>{ getExp().name=e.target.value; saveExpenses(); };
+document.getElementById("addItem").onclick=()=>{ getExp().items.push({pay:"개인카드",cat:"",date:"",vendor:"",desc:"",amount:""}); saveExpenses(); renderExpTables(); };
+document.getElementById("addTransport").onclick=()=>{ getExp().transport.push({pay:"개인카드",mode:"",date:"",from:"",to:"",work:"",fare:""}); saveExpenses(); renderExpTables(); };
+document.getElementById("expSave").onclick=()=>{ saveExpenses(); const b=document.getElementById("expSave"); const t=b.textContent; b.textContent="✅ 저장됨"; setTimeout(()=>b.textContent=t,1500); };
+document.getElementById("expExport").onclick=exportExpenseExcel;
+function exportExpenseExcel(){
+  if(typeof XLSX==="undefined"){ alert("엑셀 라이브러리 로딩 중이에요. 인터넷 연결 확인 후 잠시 뒤 다시 시도해주세요."); return; }
+  const e=getExp(); const {isum,tsum}=expSums(); const total=isum+tsum;
+  const thin={style:"thin",color:{rgb:"BBBBBB"}}, border={top:thin,bottom:thin,left:thin,right:thin};
+  const HDR="F2E9C8";
+  const sC=(v,o={})=>{ const num=o.num===true; return {v:(v==null?"":v),t:num?"n":"s",s:{alignment:{horizontal:o.al||(num?"right":"left"),vertical:"center",wrapText:true},border,font:{bold:!!o.bold,sz:o.sz||10},fill:o.bg?{fgColor:{rgb:o.bg}}:undefined,numFmt:num?"#,##0":undefined}}; };
+  const E=()=>sC("");
+  const aoa=[];
+  aoa.push([sC("개인 및 업무비용 / 교통비 사용내역",{bold:true,al:"center",sz:14}),E(),E(),E(),E(),E(),E(),E()]);
+  aoa.push([sC("부 서",{bold:true,bg:HDR,al:"center"}),sC(e.dept||""),E(),E(),E(),sC("담당",{bold:true,bg:HDR,al:"center"}),sC("이사",{bold:true,bg:HDR,al:"center"}),sC("대표",{bold:true,bg:HDR,al:"center"})]);
+  aoa.push([sC("성 명",{bold:true,bg:HDR,al:"center"}),sC(e.name||""),E(),E(),E(),E(),E(),E()]);
+  aoa.push([sC("청구월",{bold:true,bg:HDR,al:"center"}),sC(expMonth),E(),E(),sC("금 액",{bold:true,bg:HDR,al:"center"}),sC(total,{num:true,bold:true}),E(),E()]);
+  aoa.push([E(),E(),E(),E(),E(),E(),E(),E()]);
+  aoa.push([sC("번호",{bold:true,bg:HDR,al:"center"}),sC("결제구분",{bold:true,bg:HDR,al:"center"}),sC("항목",{bold:true,bg:HDR,al:"center"}),sC("사용일자",{bold:true,bg:HDR,al:"center"}),sC("사용거래처",{bold:true,bg:HDR,al:"center"}),sC("사용내역",{bold:true,bg:HDR,al:"center"}),E(),sC("금액",{bold:true,bg:HDR,al:"center"})]);
+  e.items.forEach((r,i)=>aoa.push([sC(i+1,{al:"center"}),sC(r.pay||""),sC(r.cat||""),sC(fmtXlDate(r.date),{al:"center"}),sC(r.vendor||""),sC(r.desc||""),E(),sC(Number(r.amount)||0,{num:true})]));
+  aoa.push([sC("비용 계",{bold:true,al:"center",bg:HDR}),E(),E(),E(),E(),E(),E(),sC(isum,{num:true,bold:true})]);
+  aoa.push([E(),E(),E(),E(),E(),E(),E(),E()]);
+  aoa.push([sC("번호",{bold:true,bg:HDR,al:"center"}),sC("결제구분",{bold:true,bg:HDR,al:"center"}),sC("이용수단",{bold:true,bg:HDR,al:"center"}),sC("사용일자",{bold:true,bg:HDR,al:"center"}),sC("출발지",{bold:true,bg:HDR,al:"center"}),sC("도착지",{bold:true,bg:HDR,al:"center"}),sC("업무사항",{bold:true,bg:HDR,al:"center"}),sC("요금",{bold:true,bg:HDR,al:"center"})]);
+  e.transport.forEach((r,i)=>aoa.push([sC(i+1,{al:"center"}),sC(r.pay||""),sC(r.mode||""),sC(fmtXlDate(r.date),{al:"center"}),sC(r.from||""),sC(r.to||""),sC(r.work||""),sC(Number(r.fare)||0,{num:true})]));
+  aoa.push([sC("교통비 계",{bold:true,al:"center",bg:HDR}),E(),E(),E(),E(),E(),E(),sC(tsum,{num:true,bold:true})]);
+  aoa.push([sC("총 계",{bold:true,al:"center",bg:HDR}),E(),E(),E(),E(),E(),E(),sC(total,{num:true,bold:true})]);
+  const ws=XLSX.utils.aoa_to_sheet(aoa);
+  ws["!cols"]=[{wch:6},{wch:10},{wch:12},{wch:12},{wch:16},{wch:18},{wch:14},{wch:12}];
+  const N=e.items.length, M=e.transport.length, itemsHeader=5;
+  const costSumRow=itemsHeader+1+N, trHeaderRow=costSumRow+2, trSumRow=trHeaderRow+1+M, totalRow=trSumRow+1;
+  const merges=[], m=(sr,sc,er,ec)=>merges.push({s:{r:sr,c:sc},e:{r:er,c:ec}});
+  m(0,0,0,7); m(1,1,1,3); m(2,1,2,3); m(3,1,3,3); m(3,5,3,7);
+  m(itemsHeader,5,itemsHeader,6);
+  for(let i=0;i<N;i++) m(itemsHeader+1+i,5,itemsHeader+1+i,6);
+  m(costSumRow,0,costSumRow,6); m(trSumRow,0,trSumRow,6); m(totalRow,0,totalRow,6);
+  ws["!merges"]=merges;
+  const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,"개인비용");
+  XLSX.writeFile(wb, `개인비용_${(e.name||"이름")}_${expMonth}.xlsx`);
+}
 
 /* ---------------- 초기화 ---------------- */
 fillHourSelects();
