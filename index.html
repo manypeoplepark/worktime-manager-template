@@ -1276,19 +1276,32 @@ function openPhoto(tg){ photoTarget=tg; const inp=document.getElementById("photo
 function setOcr(msg){ const el=document.getElementById("ocrStatus"); if(el) el.textContent=msg||""; }
 function compressImage(file,maxW,q){ return new Promise((res,rej)=>{ const rd=new FileReader(); rd.onerror=rej; rd.onload=()=>{ const img=new Image(); img.onerror=rej; img.onload=()=>{ let w=img.width,h=img.height; if(w>maxW){ h=Math.round(h*maxW/w); w=maxW; } const c=document.createElement("canvas"); c.width=w; c.height=h; c.getContext("2d").drawImage(img,0,0,w,h); res(c.toDataURL("image/jpeg",q)); }; img.src=rd.result; }; rd.readAsDataURL(file); }); }
 async function ocrReceipt(dataUrl){
+  if(typeof Tesseract==="undefined"){ return {ok:false, reason:"lib"}; }
+  setOcr("🔎 영수증 인식 중… (처음엔 몇 초 걸려요)");
   try{
-    if(typeof Tesseract==="undefined"){ return {}; }
-    setOcr("🔎 영수증 인식 중… (몇 초 걸려요)");
     const out=await Tesseract.recognize(dataUrl,"kor+eng");
-    const text=(out&&out.data&&out.data.text)||"";
-    const nums=(text.match(/[0-9][0-9,]{2,}/g)||[]).map(s=>Number(s.replace(/,/g,""))).filter(n=>n>=100 && n<100000000);
-    const amount=nums.length?Math.max(...nums):"";
+    const text=((out&&out.data&&out.data.text)||"");
+    // 금액: 합계/총액 등 키워드 라인 우선, 없으면 전체 최대값
+    const lines=text.split(/\n/);
+    const kw=/합\s*계|총\s*액|받을\s*금액|결제\s*금액|승인\s*금액|판매\s*금액|금\s*액/;
+    let cands=[];
+    for(const ln of lines){ if(kw.test(ln)){ const ns=(ln.match(/[0-9][0-9,]{2,}/g)||[]).map(s=>Number(s.replace(/,/g,""))).filter(n=>n>=10 && n<100000000); cands.push(...ns); } }
+    let amount="";
+    if(cands.length) amount=Math.max(...cands);
+    else { const all=(text.match(/[0-9][0-9,]{2,}/g)||[]).map(s=>Number(s.replace(/,/g,""))).filter(n=>n>=100 && n<100000000 && String(n).length<=7); if(all.length) amount=Math.max(...all); }
+    // 일자: 2025-08-20 / 2025.8.20 / 2025년 8월 20일 / 25-08-20 등
     let date="";
     let m=text.match(/(20\d{2})\s*[.\-\/년]\s*(\d{1,2})\s*[.\-\/월]\s*(\d{1,2})/);
     if(m) date=`${m[1]}-${pad(+m[2])}-${pad(+m[3])}`;
-    else { const m2=text.match(/\b(\d{2})[.\-\/](\d{1,2})[.\-\/](\d{1,2})\b/); if(m2) date=`20${m2[1]}-${pad(+m2[2])}-${pad(+m2[3])}`; }
-    return {amount,date};
-  }catch(e){ return {}; } finally{ setOcr(""); }
+    if(!date){ const m2=text.match(/\b(\d{2})\s*[.\-\/]\s*(\d{1,2})\s*[.\-\/]\s*(\d{1,2})\b/); if(m2){ const mo=+m2[2], dd=+m2[3]; if(mo>=1&&mo<=12&&dd>=1&&dd<=31) date=`20${m2[1]}-${pad(mo)}-${pad(dd)}`; } }
+    return {ok:true, amount, date};
+  }catch(e){ return {ok:false, reason:"err"}; } finally{ setOcr(""); }
+}
+function ocrFeedback(res){
+  let msg;
+  if(!res.ok) msg = (res.reason==="lib") ? "⚠️ OCR 로딩 실패(인터넷 확인) — 금액·일자를 직접 입력하세요" : "⚠️ 영수증 인식 실패 — 금액·일자를 직접 입력하세요";
+  else msg = `💡 인식결과 — 금액: ${res.amount?won(res.amount)+"원":"미검출"} · 일자: ${res.date||"미검출"}  (확인·수정하세요)`;
+  setOcr(msg); setTimeout(()=>{ const el=document.getElementById("ocrStatus"); if(el && el.textContent===msg) el.textContent=""; },8000);
 }
 document.getElementById("photoInput").onchange=async ev=>{
   const file=ev.target.files&&ev.target.files[0]; const tg=photoTarget; photoTarget=null;
@@ -1301,15 +1314,16 @@ document.getElementById("photoInput").onchange=async ev=>{
       : {pay:"개인카드",mode:"",proof:"사진영수증",date:"",from:"",to:"",work:"",fare:"",img:dataUrl};
     e[key].push(base); saveExpenses(); renderExpTables();
     const idx=e[key].length-1;
-    const {amount,date}=await ocrReceipt(dataUrl);
+    const res=await ocrReceipt(dataUrl);
     const row=e[key][idx];
-    if(row){ if(amount){ if(tg.kind==="item") row.amount=amount; else row.fare=amount; } if(date) row.date=date; saveExpenses(); renderExpTables(); }
+    if(row){ if(res.amount){ if(tg.kind==="item") row.amount=res.amount; else row.fare=res.amount; } if(res.date) row.date=res.date; saveExpenses(); renderExpTables(); }
+    ocrFeedback(res);
     return;
   }
   const row=e[key][tg.idx]; if(!row) return;
   row.img=dataUrl; if(!row.proof||row.proof==="없음") row.proof="사진영수증";
   saveExpenses(); renderExpTables();
-  if(tg.ocr){ const {amount,date}=await ocrReceipt(dataUrl); const r2=e[key][tg.idx]; if(r2){ if(amount && !r2.amount && !r2.fare){ if(tg.kind==="item") r2.amount=amount; else r2.fare=amount; } if(date && !r2.date) r2.date=date; saveExpenses(); renderExpTables(); } }
+  if(tg.ocr){ const res=await ocrReceipt(dataUrl); const r2=e[key][tg.idx]; if(r2){ if(res.amount && !r2.amount && !r2.fare){ if(tg.kind==="item") r2.amount=res.amount; else r2.fare=res.amount; } if(res.date && !r2.date) r2.date=res.date; saveExpenses(); renderExpTables(); } ocrFeedback(res); }
 };
 
 /* --- 엑셀 내보내기 (ExcelJS, 영수증 이미지 포함) --- */
