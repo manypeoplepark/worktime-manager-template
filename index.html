@@ -6,7 +6,8 @@
 <title>근무시간 · 연차 매니저</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%23f5c518'/><circle cx='50' cy='53' r='27' fill='none' stroke='%231a1a1a' stroke-width='8'/><path d='M50 53 L50 34 M50 53 L65 60' stroke='%231a1a1a' stroke-width='8' stroke-linecap='round'/></svg>" />
 <link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
-<script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
 <style>
   :root, html[data-theme="dark"] {
     color-scheme: dark;
@@ -146,6 +147,12 @@
   .exptable input[type=number]{ text-align:right; }
   .exptable .del { cursor:pointer; color:var(--over); text-align:center; width:32px; user-select:none; font-weight:700; }
   .exptable tfoot td { background:var(--panel-2); font-weight:700; }
+  .exptable select { width:100%; background:transparent; border:0; color:var(--text); font-size:12px; padding:5px 2px; font-family:inherit; }
+  .exptable .pcell { text-align:center; width:66px; }
+  .exptable .rcpt { width:38px; height:38px; object-fit:cover; border-radius:5px; cursor:pointer; vertical-align:middle; }
+  .exptable .imgrep { display:block; font-size:10px; color:var(--muted); cursor:pointer; margin-top:2px; }
+  .exptable .imgrep:hover { color:var(--accent); }
+  #ocrStatus { color:var(--accent); font-weight:600; }
 
   /* week report */
   .weekbars { display: flex; gap: 10px; align-items: flex-end; height: 200px; padding-top: 10px; }
@@ -415,11 +422,19 @@
 
       <div class="exphd">개인 및 업무비용</div>
       <div style="overflow-x:auto"><table class="exptable" id="expItems"></table></div>
-      <button class="btn ghost sm" id="addItem" style="margin-top:8px">+ 행 추가</button>
+      <div class="row" style="margin-top:8px">
+        <button class="btn ghost sm" id="addItem">+ 행 추가</button>
+        <button class="btn sm" id="addPhotoItem">📷 영수증으로 추가 (자동인식)</button>
+        <span id="ocrStatus" class="legendmini"></span>
+      </div>
 
       <div class="exphd" style="margin-top:20px">교통비</div>
       <div style="overflow-x:auto"><table class="exptable" id="expTransport"></table></div>
-      <button class="btn ghost sm" id="addTransport" style="margin-top:8px">+ 행 추가</button>
+      <div class="row" style="margin-top:8px">
+        <button class="btn ghost sm" id="addTransport">+ 행 추가</button>
+        <button class="btn ghost sm" id="addPhotoTransport">📷 영수증으로 추가</button>
+      </div>
+      <input type="file" id="photoInput" accept="image/*" capture="environment" style="display:none" />
     </div>
     <div class="card">
       <div class="note">
@@ -1164,25 +1179,42 @@ applyTheme(LS.get("wtm_theme","dark"));
 
 /* ---------------- 개인비용 ---------------- */
 let expenses = LS.get("wtm_expenses", {});
+let expCats = LS.get("wtm_expcats", ["업무","야근식대","야근교통비","이동비","식대","비품","소모품","접대비","기타"]);
+const PROOF = ["사진영수증","지류영수증","전자영수증","간이영수증","없음"];
 function ymNow(){ const d=new Date(); return `${d.getFullYear()}-${pad(d.getMonth()+1)}`; }
 let expMonth = ymNow();
 function blankExp(){ return { dept:"더블유캠프", name:(settings.myName||""), items:[], transport:[] }; }
 function getExp(){ if(!expenses[expMonth]) expenses[expMonth]=blankExp(); return expenses[expMonth]; }
-function saveExpenses(){ LS.set("wtm_expenses", expenses); }
+function saveExpenses(){ try{ LS.set("wtm_expenses", expenses); }catch(e){ alert("저장 공간이 부족해요(사진이 많을 수 있어요). 이번 달을 엑셀로 내보낸 뒤 지난 달 내역을 정리해주세요."); } }
 function won(n){ return (Number(n)||0).toLocaleString("ko-KR"); }
 function fmtXlDate(d){ if(!d) return ""; const p=String(d).split("-"); return p.length===3? `${+p[1]}/${+p[2]}/${p[0]}` : d; }
-const ITEM_COLS=[{f:"pay",h:"결제구분",list:"dlPay"},{f:"cat",h:"항목",list:"dlCat"},{f:"date",h:"사용일자",type:"date"},{f:"vendor",h:"사용거래처"},{f:"desc",h:"사용내역"},{f:"amount",h:"금액",type:"number"}];
-const TR_COLS=[{f:"pay",h:"결제구분",list:"dlPay"},{f:"mode",h:"이용수단",list:"dlMode"},{f:"date",h:"사용일자",type:"date"},{f:"from",h:"출발지"},{f:"to",h:"도착지"},{f:"work",h:"업무사항"},{f:"fare",h:"요금",type:"number"}];
+function escH(s){ return String(s==null?"":s).replace(/&/g,"&amp;").replace(/"/g,"&quot;").replace(/</g,"&lt;"); }
+function optH(v,sel){ return `<option value="${escH(v)}"${v===sel?" selected":""}>${escH(v)}</option>`; }
+const ITEM_COLS=[{f:"pay",h:"결제구분",type:"list",list:"dlPay"},{f:"cat",h:"항목",type:"cat"},{f:"proof",h:"증빙",type:"proof"},{f:"date",h:"사용일자",type:"date"},{f:"vendor",h:"사용거래처",type:"text"},{f:"desc",h:"사용내역",type:"text"},{f:"amount",h:"금액",type:"number"}];
+const TR_COLS=[{f:"pay",h:"결제구분",type:"list",list:"dlPay"},{f:"mode",h:"이용수단",type:"list",list:"dlMode"},{f:"proof",h:"증빙",type:"proof"},{f:"date",h:"사용일자",type:"date"},{f:"from",h:"출발지",type:"text"},{f:"to",h:"도착지",type:"text"},{f:"work",h:"업무사항",type:"text"},{f:"fare",h:"요금",type:"number"}];
+function expCellHtml(c,row,kind,idx){
+  const v=row[c.f]!=null?row[c.f]:""; const a=`data-kind="${kind}" data-idx="${idx}" data-field="${c.f}"`;
+  if(c.type==="date") return `<td><input type="date" ${a} value="${v}"></td>`;
+  if(c.type==="number") return `<td><input type="number" min="0" step="1" ${a} value="${v}"></td>`;
+  if(c.type==="cat"){ let o=expCats.map(x=>optH(x,v)).join(""); if(v && !expCats.includes(v)) o+=optH(v,v); return `<td><select ${a}>${o}<option value="__add__">➕ 새 항목…</option></select></td>`; }
+  if(c.type==="proof"){ return `<td><select ${a}>${PROOF.map(x=>optH(x,v||"없음")).join("")}</select></td>`; }
+  return `<td><input type="text" list="${c.list||''}" ${a} value="${escH(v)}"></td>`;
+}
+function photoCell(row,kind,idx){
+  if(row.img) return `<td class="pcell"><img class="rcpt" src="${row.img}" data-view="${kind}" data-idx="${idx}" title="클릭하면 크게 보기"><span class="imgrep" data-photo="${kind}" data-idx="${idx}">교체</span></td>`;
+  return `<td class="pcell"><button class="btn ghost sm" data-photo="${kind}" data-idx="${idx}">📷</button></td>`;
+}
 function expRowHtml(cols,row,kind,idx){
   let tds=`<td class="num">${idx+1}</td>`;
-  for(const c of cols){
-    const v=(row[c.f]!=null?row[c.f]:""); const a=`data-kind="${kind}" data-idx="${idx}" data-field="${c.f}"`;
-    if(c.type==="date") tds+=`<td><input type="date" ${a} value="${v}"></td>`;
-    else if(c.type==="number") tds+=`<td><input type="number" min="0" step="1" ${a} value="${v}"></td>`;
-    else tds+=`<td><input type="text" list="${c.list||''}" ${a} value="${String(v).replace(/"/g,'&quot;')}"></td>`;
-  }
-  tds+=`<td class="del" data-del="${kind}" data-idx="${idx}" title="삭제">✕</td>`;
+  for(const c of cols) tds+=expCellHtml(c,row,kind,idx);
+  tds+=photoCell(row,kind,idx);
+  tds+=`<td class="del" data-del="${kind}" data-idx="${idx}" title="행 삭제">✕</td>`;
   return `<tr>${tds}</tr>`;
+}
+function tableHtml(cols,rows,kind,sumLabel){
+  const body=rows.map((r,i)=>expRowHtml(cols,r,kind,i)).join("") || `<tr><td class="num">-</td><td colspan="${cols.length+2}" style="color:var(--muted);padding:8px">아래 버튼으로 내역/영수증을 추가하세요</td></tr>`;
+  return `<thead><tr><th>#</th>${cols.map(c=>`<th>${c.h}</th>`).join("")}<th>영수증</th><th></th></tr></thead><tbody>${body}</tbody>`+
+    `<tfoot><tr><td colspan="${cols.length}" style="text-align:right">${sumLabel}</td><td class="sumcell" style="text-align:right"></td><td></td><td></td></tr></tfoot>`;
 }
 function expSums(){ const e=getExp(); return { isum:e.items.reduce((s,r)=>s+(Number(r.amount)||0),0), tsum:e.transport.reduce((s,r)=>s+(Number(r.fare)||0),0) }; }
 function updateExpTotals(){
@@ -1197,14 +1229,8 @@ function updateExpTotals(){
 }
 function renderExpTables(){
   const e=getExp();
-  const ibody=e.items.map((r,i)=>expRowHtml(ITEM_COLS,r,"item",i)).join("") || `<tr><td class="num">-</td><td colspan="${ITEM_COLS.length+1}" style="color:var(--muted);padding:8px">아래 "+ 행 추가"로 입력하세요</td></tr>`;
-  document.getElementById("expItems").innerHTML=
-    `<thead><tr><th>#</th>${ITEM_COLS.map(c=>`<th>${c.h}</th>`).join("")}<th></th></tr></thead><tbody>${ibody}</tbody>`+
-    `<tfoot><tr><td colspan="${ITEM_COLS.length}" style="text-align:right">비용 계</td><td class="sumcell" style="text-align:right"></td><td></td></tr></tfoot>`;
-  const tbody=e.transport.map((r,i)=>expRowHtml(TR_COLS,r,"transport",i)).join("") || `<tr><td class="num">-</td><td colspan="${TR_COLS.length+1}" style="color:var(--muted);padding:8px">아래 "+ 행 추가"로 입력하세요</td></tr>`;
-  document.getElementById("expTransport").innerHTML=
-    `<thead><tr><th>#</th>${TR_COLS.map(c=>`<th>${c.h}</th>`).join("")}<th></th></tr></thead><tbody>${tbody}</tbody>`+
-    `<tfoot><tr><td colspan="${TR_COLS.length}" style="text-align:right">교통비 계</td><td class="sumcell" style="text-align:right"></td><td></td></tr></tfoot>`;
+  document.getElementById("expItems").innerHTML=tableHtml(ITEM_COLS,e.items,"item","비용 계");
+  document.getElementById("expTransport").innerHTML=tableHtml(TR_COLS,e.transport,"transport","교통비 계");
   updateExpTotals();
 }
 function renderExpense(){
@@ -1217,57 +1243,116 @@ function renderExpense(){
 ["expItems","expTransport"].forEach(id=>{
   const el=document.getElementById(id);
   el.addEventListener("input",ev=>{
-    const t=ev.target, kind=t.dataset.kind; if(!kind) return;
-    const row=getExp()[kind==="item"?"items":"transport"][+t.dataset.idx]; if(!row) return;
+    const t=ev.target, kind=t.dataset.kind; if(!kind||!t.dataset.field) return;
+    const arr=getExp()[kind==="item"?"items":"transport"]; const row=arr[+t.dataset.idx]; if(!row) return;
+    if(t.dataset.field==="cat" && t.value==="__add__"){
+      const nc=(prompt("새 항목(카테고리) 이름:")||"").trim();
+      if(nc){ if(!expCats.includes(nc)){ expCats.push(nc); LS.set("wtm_expcats",expCats); } row.cat=nc; }
+      saveExpenses(); renderExpTables(); return;
+    }
     row[t.dataset.field]= t.type==="number" ? (t.value===""?"":Number(t.value)) : t.value;
     saveExpenses(); updateExpTotals();
   });
   el.addEventListener("click",ev=>{
-    const d=ev.target.dataset.del; if(!d) return;
-    getExp()[d==="item"?"items":"transport"].splice(+ev.target.dataset.idx,1);
-    saveExpenses(); renderExpTables();
+    const t=ev.target;
+    if(t.dataset.del){ getExp()[t.dataset.del==="item"?"items":"transport"].splice(+t.dataset.idx,1); saveExpenses(); renderExpTables(); return; }
+    if(t.dataset.photo){ openPhoto({mode:"attach",kind:t.dataset.photo,idx:+t.dataset.idx,ocr:true}); return; }
+    if(t.dataset.view){ const r=getExp()[t.dataset.view==="item"?"items":"transport"][+t.dataset.idx]; if(r&&r.img){ const w=window.open(); if(w){ w.document.write(`<title>영수증</title><body style="margin:0;background:#111"><img src="${r.img}" style="max-width:100%"></body>`); } } return; }
   });
 });
 document.getElementById("expMonth").onchange=e=>{ expMonth=e.target.value||ymNow(); renderExpense(); };
 document.getElementById("expDept").oninput=e=>{ getExp().dept=e.target.value; saveExpenses(); };
 document.getElementById("expName").oninput=e=>{ getExp().name=e.target.value; saveExpenses(); };
-document.getElementById("addItem").onclick=()=>{ getExp().items.push({pay:"개인카드",cat:"",date:"",vendor:"",desc:"",amount:""}); saveExpenses(); renderExpTables(); };
-document.getElementById("addTransport").onclick=()=>{ getExp().transport.push({pay:"개인카드",mode:"",date:"",from:"",to:"",work:"",fare:""}); saveExpenses(); renderExpTables(); };
+document.getElementById("addItem").onclick=()=>{ getExp().items.push({pay:"개인카드",cat:(expCats[0]||""),proof:"없음",date:"",vendor:"",desc:"",amount:"",img:""}); saveExpenses(); renderExpTables(); };
+document.getElementById("addTransport").onclick=()=>{ getExp().transport.push({pay:"개인카드",mode:"",proof:"없음",date:"",from:"",to:"",work:"",fare:"",img:""}); saveExpenses(); renderExpTables(); };
 document.getElementById("expSave").onclick=()=>{ saveExpenses(); const b=document.getElementById("expSave"); const t=b.textContent; b.textContent="✅ 저장됨"; setTimeout(()=>b.textContent=t,1500); };
 document.getElementById("expExport").onclick=exportExpenseExcel;
-function exportExpenseExcel(){
-  if(typeof XLSX==="undefined"){ alert("엑셀 라이브러리 로딩 중이에요. 인터넷 연결 확인 후 잠시 뒤 다시 시도해주세요."); return; }
-  const e=getExp(); const {isum,tsum}=expSums(); const total=isum+tsum;
-  const thin={style:"thin",color:{rgb:"BBBBBB"}}, border={top:thin,bottom:thin,left:thin,right:thin};
-  const HDR="F2E9C8";
-  const sC=(v,o={})=>{ const num=o.num===true; return {v:(v==null?"":v),t:num?"n":"s",s:{alignment:{horizontal:o.al||(num?"right":"left"),vertical:"center",wrapText:true},border,font:{bold:!!o.bold,sz:o.sz||10},fill:o.bg?{fgColor:{rgb:o.bg}}:undefined,numFmt:num?"#,##0":undefined}}; };
-  const E=()=>sC("");
-  const aoa=[];
-  aoa.push([sC("개인 및 업무비용 / 교통비 사용내역",{bold:true,al:"center",sz:14}),E(),E(),E(),E(),E(),E(),E()]);
-  aoa.push([sC("부 서",{bold:true,bg:HDR,al:"center"}),sC(e.dept||""),E(),E(),E(),sC("담당",{bold:true,bg:HDR,al:"center"}),sC("이사",{bold:true,bg:HDR,al:"center"}),sC("대표",{bold:true,bg:HDR,al:"center"})]);
-  aoa.push([sC("성 명",{bold:true,bg:HDR,al:"center"}),sC(e.name||""),E(),E(),E(),E(),E(),E()]);
-  aoa.push([sC("청구월",{bold:true,bg:HDR,al:"center"}),sC(expMonth),E(),E(),sC("금 액",{bold:true,bg:HDR,al:"center"}),sC(total,{num:true,bold:true}),E(),E()]);
-  aoa.push([E(),E(),E(),E(),E(),E(),E(),E()]);
-  aoa.push([sC("번호",{bold:true,bg:HDR,al:"center"}),sC("결제구분",{bold:true,bg:HDR,al:"center"}),sC("항목",{bold:true,bg:HDR,al:"center"}),sC("사용일자",{bold:true,bg:HDR,al:"center"}),sC("사용거래처",{bold:true,bg:HDR,al:"center"}),sC("사용내역",{bold:true,bg:HDR,al:"center"}),E(),sC("금액",{bold:true,bg:HDR,al:"center"})]);
-  e.items.forEach((r,i)=>aoa.push([sC(i+1,{al:"center"}),sC(r.pay||""),sC(r.cat||""),sC(fmtXlDate(r.date),{al:"center"}),sC(r.vendor||""),sC(r.desc||""),E(),sC(Number(r.amount)||0,{num:true})]));
-  aoa.push([sC("비용 계",{bold:true,al:"center",bg:HDR}),E(),E(),E(),E(),E(),E(),sC(isum,{num:true,bold:true})]);
-  aoa.push([E(),E(),E(),E(),E(),E(),E(),E()]);
-  aoa.push([sC("번호",{bold:true,bg:HDR,al:"center"}),sC("결제구분",{bold:true,bg:HDR,al:"center"}),sC("이용수단",{bold:true,bg:HDR,al:"center"}),sC("사용일자",{bold:true,bg:HDR,al:"center"}),sC("출발지",{bold:true,bg:HDR,al:"center"}),sC("도착지",{bold:true,bg:HDR,al:"center"}),sC("업무사항",{bold:true,bg:HDR,al:"center"}),sC("요금",{bold:true,bg:HDR,al:"center"})]);
-  e.transport.forEach((r,i)=>aoa.push([sC(i+1,{al:"center"}),sC(r.pay||""),sC(r.mode||""),sC(fmtXlDate(r.date),{al:"center"}),sC(r.from||""),sC(r.to||""),sC(r.work||""),sC(Number(r.fare)||0,{num:true})]));
-  aoa.push([sC("교통비 계",{bold:true,al:"center",bg:HDR}),E(),E(),E(),E(),E(),E(),sC(tsum,{num:true,bold:true})]);
-  aoa.push([sC("총 계",{bold:true,al:"center",bg:HDR}),E(),E(),E(),E(),E(),E(),sC(total,{num:true,bold:true})]);
-  const ws=XLSX.utils.aoa_to_sheet(aoa);
-  ws["!cols"]=[{wch:6},{wch:10},{wch:12},{wch:12},{wch:16},{wch:18},{wch:14},{wch:12}];
-  const N=e.items.length, M=e.transport.length, itemsHeader=5;
-  const costSumRow=itemsHeader+1+N, trHeaderRow=costSumRow+2, trSumRow=trHeaderRow+1+M, totalRow=trSumRow+1;
-  const merges=[], m=(sr,sc,er,ec)=>merges.push({s:{r:sr,c:sc},e:{r:er,c:ec}});
-  m(0,0,0,7); m(1,1,1,3); m(2,1,2,3); m(3,1,3,3); m(3,5,3,7);
-  m(itemsHeader,5,itemsHeader,6);
-  for(let i=0;i<N;i++) m(itemsHeader+1+i,5,itemsHeader+1+i,6);
-  m(costSumRow,0,costSumRow,6); m(trSumRow,0,trSumRow,6); m(totalRow,0,totalRow,6);
-  ws["!merges"]=merges;
-  const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,"개인비용");
-  XLSX.writeFile(wb, `개인비용_${(e.name||"이름")}_${expMonth}.xlsx`);
+document.getElementById("addPhotoItem").onclick=()=>openPhoto({mode:"add",kind:"item"});
+document.getElementById("addPhotoTransport").onclick=()=>openPhoto({mode:"add",kind:"transport"});
+
+/* --- 사진 / OCR --- */
+let photoTarget=null;
+function openPhoto(tg){ photoTarget=tg; const inp=document.getElementById("photoInput"); inp.value=""; inp.click(); }
+function setOcr(msg){ const el=document.getElementById("ocrStatus"); if(el) el.textContent=msg||""; }
+function compressImage(file,maxW,q){ return new Promise((res,rej)=>{ const rd=new FileReader(); rd.onerror=rej; rd.onload=()=>{ const img=new Image(); img.onerror=rej; img.onload=()=>{ let w=img.width,h=img.height; if(w>maxW){ h=Math.round(h*maxW/w); w=maxW; } const c=document.createElement("canvas"); c.width=w; c.height=h; c.getContext("2d").drawImage(img,0,0,w,h); res(c.toDataURL("image/jpeg",q)); }; img.src=rd.result; }; rd.readAsDataURL(file); }); }
+async function ocrReceipt(dataUrl){
+  try{
+    if(typeof Tesseract==="undefined"){ return {}; }
+    setOcr("🔎 영수증 인식 중… (몇 초 걸려요)");
+    const out=await Tesseract.recognize(dataUrl,"kor+eng");
+    const text=(out&&out.data&&out.data.text)||"";
+    const nums=(text.match(/[0-9][0-9,]{2,}/g)||[]).map(s=>Number(s.replace(/,/g,""))).filter(n=>n>=100 && n<100000000);
+    const amount=nums.length?Math.max(...nums):"";
+    let date="";
+    let m=text.match(/(20\d{2})\s*[.\-\/년]\s*(\d{1,2})\s*[.\-\/월]\s*(\d{1,2})/);
+    if(m) date=`${m[1]}-${pad(+m[2])}-${pad(+m[3])}`;
+    else { const m2=text.match(/\b(\d{2})[.\-\/](\d{1,2})[.\-\/](\d{1,2})\b/); if(m2) date=`20${m2[1]}-${pad(+m2[2])}-${pad(+m2[3])}`; }
+    return {amount,date};
+  }catch(e){ return {}; } finally{ setOcr(""); }
+}
+document.getElementById("photoInput").onchange=async ev=>{
+  const file=ev.target.files&&ev.target.files[0]; const tg=photoTarget; photoTarget=null;
+  if(!file||!tg) return;
+  let dataUrl; try{ dataUrl=await compressImage(file,1000,0.55); }catch(e){ alert("이미지를 읽지 못했어요."); return; }
+  const e=getExp(); const key=(tg.kind==="item")?"items":"transport";
+  if(tg.mode==="add"){
+    const base=(tg.kind==="item")
+      ? {pay:"개인카드",cat:(expCats[0]||""),proof:"사진영수증",date:"",vendor:"",desc:"",amount:"",img:dataUrl}
+      : {pay:"개인카드",mode:"",proof:"사진영수증",date:"",from:"",to:"",work:"",fare:"",img:dataUrl};
+    e[key].push(base); saveExpenses(); renderExpTables();
+    const idx=e[key].length-1;
+    const {amount,date}=await ocrReceipt(dataUrl);
+    const row=e[key][idx];
+    if(row){ if(amount){ if(tg.kind==="item") row.amount=amount; else row.fare=amount; } if(date) row.date=date; saveExpenses(); renderExpTables(); }
+    return;
+  }
+  const row=e[key][tg.idx]; if(!row) return;
+  row.img=dataUrl; if(!row.proof||row.proof==="없음") row.proof="사진영수증";
+  saveExpenses(); renderExpTables();
+  if(tg.ocr){ const {amount,date}=await ocrReceipt(dataUrl); const r2=e[key][tg.idx]; if(r2){ if(amount && !r2.amount && !r2.fare){ if(tg.kind==="item") r2.amount=amount; else r2.fare=amount; } if(date && !r2.date) r2.date=date; saveExpenses(); renderExpTables(); } }
+};
+
+/* --- 엑셀 내보내기 (ExcelJS, 영수증 이미지 포함) --- */
+async function exportExpenseExcel(){
+  if(typeof ExcelJS==="undefined"){ alert("엑셀 라이브러리 로딩 중이에요. 인터넷 연결 후 잠시 뒤 다시 시도해주세요."); return; }
+  const btn=document.getElementById("expExport"); const ot=btn.textContent; btn.textContent="⏳ 생성 중…"; btn.disabled=true;
+  try{
+    const e=getExp(); const {isum,tsum}=expSums(); const total=isum+tsum;
+    const wb=new ExcelJS.Workbook(); const ws=wb.addWorksheet("개인비용");
+    ws.columns=[{width:6},{width:11},{width:13},{width:11},{width:12},{width:18},{width:18},{width:12},{width:16}];
+    const thin={style:"thin",color:{argb:"FFBBBBBB"}}, bd={top:thin,left:thin,bottom:thin,right:thin}, HDR="FFF2E9C8";
+    let r=0;
+    function put(cells){ r++; const row=ws.getRow(r);
+      for(let i=0;i<9;i++){ const s=cells[i]||{}; const c=row.getCell(i+1);
+        c.value=(s.v===undefined?"":s.v); c.border=bd;
+        c.alignment={vertical:"middle",horizontal:s.al||(s.num?"right":"left"),wrapText:true};
+        c.font={bold:!!s.bold,size:s.sz||10};
+        if(s.bg) c.fill={type:"pattern",pattern:"solid",fgColor:{argb:s.bg}};
+        if(s.num) c.numFmt="#,##0";
+      } return row;
+    }
+    const H=(v)=>({v,bold:true,bg:HDR,al:"center"});
+    function addImg(it){ if(!it.img) return; try{ const id=wb.addImage({base64:it.img,extension:"jpeg"}); ws.getRow(r).height=58; ws.addImage(id,{tl:{col:8.1,row:(r-1)+0.08},ext:{width:72,height:72}}); }catch(err){} }
+    put([{v:"개인 및 업무비용 / 교통비 사용내역",bold:true,al:"center",sz:14}]); ws.mergeCells(r,1,r,9);
+    put([H("부 서"),{v:e.dept||""},null,null,null,null,H("담당"),H("이사"),H("대표")]); ws.mergeCells(r,2,r,6);
+    put([H("성 명"),{v:e.name||""}]); ws.mergeCells(r,2,r,6);
+    put([H("청구월"),{v:expMonth},null,null,null,H("금 액"),{v:total,num:true,bold:true}]); ws.mergeCells(r,2,r,5); ws.mergeCells(r,7,r,9);
+    put([]);
+    put([H("번호"),H("결제구분"),H("항목"),H("증빙"),H("사용일자"),H("사용거래처"),H("사용내역"),H("금액"),H("영수증")]);
+    for(let i=0;i<e.items.length;i++){ const it=e.items[i];
+      put([{v:i+1,al:"center"},{v:it.pay||""},{v:it.cat||""},{v:it.proof||""},{v:fmtXlDate(it.date),al:"center"},{v:it.vendor||""},{v:it.desc||""},{v:Number(it.amount)||0,num:true},{v:""}]); addImg(it); }
+    put([H("비용 계"),null,null,null,null,null,null,{v:isum,num:true,bold:true},{v:""}]); ws.mergeCells(r,1,r,7);
+    put([]);
+    put([H("번호"),H("결제구분"),H("이용수단"),H("증빙"),H("사용일자"),H("출발→도착"),H("업무사항"),H("요금"),H("영수증")]);
+    for(let i=0;i<e.transport.length;i++){ const t=e.transport[i]; const route=(t.from||"")+(t.to?` → ${t.to}`:"");
+      put([{v:i+1,al:"center"},{v:t.pay||""},{v:t.mode||""},{v:t.proof||""},{v:fmtXlDate(t.date),al:"center"},{v:route},{v:t.work||""},{v:Number(t.fare)||0,num:true},{v:""}]); addImg(t); }
+    put([H("교통비 계"),null,null,null,null,null,null,{v:tsum,num:true,bold:true},{v:""}]); ws.mergeCells(r,1,r,7);
+    put([H("총 계"),null,null,null,null,null,null,{v:total,num:true,bold:true},{v:""}]); ws.mergeCells(r,1,r,7);
+    const buf=await wb.xlsx.writeBuffer();
+    const blob=new Blob([buf],{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
+    const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=`개인비용_${(e.name||"이름")}_${expMonth}.xlsx`; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),4000);
+  }catch(err){ alert("엑셀 생성 중 오류: "+(err&&err.message||err)); }
+  finally{ btn.textContent=ot; btn.disabled=false; }
 }
 
 /* ---------------- 초기화 ---------------- */
