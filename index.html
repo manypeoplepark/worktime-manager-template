@@ -148,7 +148,9 @@
   .exptable tfoot td { background:var(--panel-2); font-weight:700; }
   .exptable select { width:100%; background:transparent; border:0; color:var(--text); font-size:12px; padding:5px 2px; font-family:inherit; }
   .exptable .pcell { text-align:center; width:66px; }
-  .exptable .rcpt { width:38px; height:38px; object-fit:cover; border-radius:5px; cursor:pointer; vertical-align:middle; }
+  .exptable .rcpt { width:30px; height:30px; object-fit:cover; border-radius:5px; cursor:pointer; vertical-align:middle; }
+  .exptable .thumb { position:relative; display:inline-block; margin:1px; }
+  .exptable .thumb .x { position:absolute; top:-5px; right:-5px; background:var(--over); color:#fff; border-radius:50%; width:14px; height:14px; font-size:11px; line-height:14px; text-align:center; cursor:pointer; font-style:normal; }
   .exptable .imgrep { display:block; font-size:10px; color:var(--muted); cursor:pointer; margin-top:2px; }
   .exptable .imgrep:hover { color:var(--accent); }
   #ocrStatus { color:var(--accent); font-weight:600; }
@@ -431,7 +433,7 @@
         <button class="btn ghost sm" id="addTransport">+ 행 추가</button>
         <button class="btn ghost sm" id="addPhotoTransport">📷 영수증으로 추가</button>
       </div>
-      <input type="file" id="photoInput" accept="image/*" capture="environment" style="display:none" />
+      <input type="file" id="photoInput" accept="image/*" multiple style="display:none" />
     </div>
     <div class="card">
       <div class="note">
@@ -1175,14 +1177,20 @@ document.getElementById("themeToggle").onclick = ()=>{
 applyTheme(LS.get("wtm_theme","dark"));
 
 /* ---------------- 개인비용 ---------------- */
-let expenses = LS.get("wtm_expenses", {});
+let expenses = {};   // IndexedDB에서 비동기 로드
 let expCats = LS.get("wtm_expcats", ["업무","야근식대","야근교통비","이동비","식대","비품","소모품","접대비","기타"]);
+// 영수증 사진(건당 최대 5장) 용량 때문에 개인비용 데이터는 IndexedDB에 저장
+function idbOpen(){ return new Promise((res,rej)=>{ const r=indexedDB.open("wtm_db",1); r.onupgradeneeded=()=>r.result.createObjectStore("kv"); r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error); }); }
+function idbSet(k,v){ return idbOpen().then(db=>new Promise((res,rej)=>{ const tx=db.transaction("kv","readwrite"); tx.objectStore("kv").put(v,k); tx.oncomplete=()=>res(); tx.onerror=()=>rej(tx.error); })).catch(()=>{}); }
+function idbGet(k){ return idbOpen().then(db=>new Promise(res=>{ const rq=db.transaction("kv","readonly").objectStore("kv").get(k); rq.onsuccess=()=>res(rq.result); rq.onerror=()=>res(undefined); })).catch(()=>undefined); }
+function normalizeImgs(){ for(const mo in expenses){ const e=expenses[mo]; ["items","transport"].forEach(k=>{ (e[k]||[]).forEach(row=>{ if(!Array.isArray(row.imgs)) row.imgs = row.img ? [row.img] : []; delete row.img; }); }); } }
+async function loadExpenses(){ let data=await idbGet("expenses"); if(!data){ const ls=LS.get("wtm_expenses",null); if(ls) data=ls; } expenses=data||{}; normalizeImgs(); }
 const PROOF = ["사진영수증","지류영수증","전자영수증","간이영수증","없음"];
 function ymNow(){ const d=new Date(); return `${d.getFullYear()}-${pad(d.getMonth()+1)}`; }
 let expMonth = ymNow();
 function blankExp(){ return { dept:"더블유캠프", name:(settings.myName||""), items:[], transport:[] }; }
 function getExp(){ if(!expenses[expMonth]) expenses[expMonth]=blankExp(); return expenses[expMonth]; }
-function saveExpenses(){ try{ LS.set("wtm_expenses", expenses); }catch(e){ alert("저장 공간이 부족해요(사진이 많을 수 있어요). 이번 달을 엑셀로 내보낸 뒤 지난 달 내역을 정리해주세요."); } }
+function saveExpenses(){ idbSet("expenses", expenses); }
 function won(n){ return (Number(n)||0).toLocaleString("ko-KR"); }
 function fmtXlDate(d){ if(!d) return ""; const p=String(d).split("-"); return p.length===3? `${+p[1]}/${+p[2]}/${p[0]}` : d; }
 function escH(s){ return String(s==null?"":s).replace(/&/g,"&amp;").replace(/"/g,"&quot;").replace(/</g,"&lt;"); }
@@ -1198,8 +1206,11 @@ function expCellHtml(c,row,kind,idx){
   return `<td><input type="text" list="${c.list||''}" ${a} value="${escH(v)}"></td>`;
 }
 function photoCell(row,kind,idx){
-  if(row.img) return `<td class="pcell"><img class="rcpt" src="${row.img}" data-view="${kind}" data-idx="${idx}" title="클릭하면 크게 보기"><span class="imgrep" data-photo="${kind}" data-idx="${idx}">교체</span></td>`;
-  return `<td class="pcell"><button class="btn ghost sm" data-photo="${kind}" data-idx="${idx}">📷</button></td>`;
+  const imgs=row.imgs||[];
+  const thumbs=imgs.map((src,ii)=>`<span class="thumb"><img class="rcpt" src="${src}" data-view="${kind}" data-idx="${idx}" data-ii="${ii}" title="클릭=크게 보기"><i class="x" data-rmimg="${kind}" data-idx="${idx}" data-ii="${ii}" title="삭제">×</i></span>`).join("");
+  const add = imgs.length<5 ? `<button class="btn ghost sm" data-photo="${kind}" data-idx="${idx}" title="사진 추가(여러 장 선택 가능)">📷+</button>` : "";
+  const cnt = imgs.length ? `<span class="imgrep">${imgs.length}/5</span>` : "";
+  return `<td class="pcell">${thumbs}${add}${cnt}</td>`;
 }
 function expRowHtml(cols,row,kind,idx){
   let tds=`<td class="num">${idx+1}</td>`;
@@ -1224,8 +1235,10 @@ function updateExpTotals(){
     <div class="stat"><div class="k">총 계</div><div class="v good">${won(isum+tsum)}<small> 원</small></div></div>
     <div class="stat"><div class="k">내역 건수</div><div class="v">${e.items.length+e.transport.length}<small> 건</small></div></div>`;
 }
+function sortByDate(arr){ arr.sort((a,b)=> (a.date||"9999-99-99").localeCompare(b.date||"9999-99-99")); }
 function renderExpTables(){
   const e=getExp();
+  sortByDate(e.items); sortByDate(e.transport);   // 일자 빠른 순(빈 날짜는 뒤로)
   document.getElementById("expItems").innerHTML=tableHtml(ITEM_COLS,e.items,"item","비용 계");
   document.getElementById("expTransport").innerHTML=tableHtml(TR_COLS,e.transport,"transport","교통비 계");
   updateExpTotals();
@@ -1252,14 +1265,16 @@ function renderExpense(){
   el.addEventListener("click",ev=>{
     const t=ev.target;
     if(t.dataset.del){ getExp()[t.dataset.del==="item"?"items":"transport"].splice(+t.dataset.idx,1); saveExpenses(); renderExpTables(); return; }
+    if(t.dataset.rmimg){ const r=getExp()[t.dataset.rmimg==="item"?"items":"transport"][+t.dataset.idx]; if(r&&r.imgs){ r.imgs.splice(+t.dataset.ii,1); saveExpenses(); renderExpTables(); } return; }
     if(t.dataset.photo){ openPhoto({mode:"attach",kind:t.dataset.photo,idx:+t.dataset.idx,ocr:true}); return; }
-    if(t.dataset.view){ const r=getExp()[t.dataset.view==="item"?"items":"transport"][+t.dataset.idx]; if(r&&r.img){ const w=window.open(); if(w){ w.document.write(`<title>영수증</title><body style="margin:0;background:#111"><img src="${r.img}" style="max-width:100%"></body>`); } } return; }
+    if(t.dataset.view){ const r=getExp()[t.dataset.view==="item"?"items":"transport"][+t.dataset.idx]; const src=r&&r.imgs&&r.imgs[+t.dataset.ii]; if(src){ const w=window.open(); if(w) w.document.write(`<title>영수증</title><body style="margin:0;background:#111"><img src="${src}" style="max-width:100%"></body>`); } return; }
   });
+  el.addEventListener("change",ev=>{ if(ev.target.dataset && ev.target.dataset.field==="date") renderExpTables(); });
 });
 document.getElementById("expMonth").onchange=e=>{ expMonth=e.target.value||ymNow(); renderExpense(); };
 document.getElementById("expName").oninput=e=>{ getExp().name=e.target.value; saveExpenses(); };
-document.getElementById("addItem").onclick=()=>{ getExp().items.push({pay:"개인카드",cat:(expCats[0]||""),proof:"없음",date:"",vendor:"",desc:"",amount:"",img:""}); saveExpenses(); renderExpTables(); };
-document.getElementById("addTransport").onclick=()=>{ getExp().transport.push({pay:"개인카드",mode:"",proof:"없음",date:"",from:"",to:"",work:"",fare:"",img:""}); saveExpenses(); renderExpTables(); };
+document.getElementById("addItem").onclick=()=>{ getExp().items.push({pay:"개인카드",cat:(expCats[0]||""),proof:"없음",date:"",vendor:"",desc:"",amount:"",imgs:[]}); saveExpenses(); renderExpTables(); };
+document.getElementById("addTransport").onclick=()=>{ getExp().transport.push({pay:"개인카드",mode:"",proof:"없음",date:"",from:"",to:"",work:"",fare:"",imgs:[]}); saveExpenses(); renderExpTables(); };
 document.getElementById("expSave").onclick=()=>{ saveExpenses(); const b=document.getElementById("expSave"); const t=b.textContent; b.textContent="✅ 저장됨"; setTimeout(()=>b.textContent=t,1500); };
 document.getElementById("expExport").onclick=exportExpenseExcel;
 document.getElementById("addPhotoItem").onclick=()=>openPhoto({mode:"add",kind:"item"});
@@ -1299,26 +1314,33 @@ function ocrFeedback(res){
   setOcr(msg); setTimeout(()=>{ const el=document.getElementById("ocrStatus"); if(el && el.textContent===msg) el.textContent=""; },8000);
 }
 document.getElementById("photoInput").onchange=async ev=>{
-  const file=ev.target.files&&ev.target.files[0]; const tg=photoTarget; photoTarget=null;
-  if(!file||!tg) return;
-  let dataUrl; try{ dataUrl=await compressImage(file,1000,0.55); }catch(e){ alert("이미지를 읽지 못했어요."); return; }
+  const files=Array.from(ev.target.files||[]); const tg=photoTarget; photoTarget=null;
+  if(!files.length||!tg) return;
+  setOcr("🖼 사진 처리 중…");
+  const urls=[]; for(const f of files){ try{ urls.push(await compressImage(f,1000,0.55)); }catch(e){} }
+  setOcr("");
+  if(!urls.length){ alert("이미지를 읽지 못했어요."); return; }
   const e=getExp(); const key=(tg.kind==="item")?"items":"transport";
   if(tg.mode==="add"){
     const base=(tg.kind==="item")
-      ? {pay:"개인카드",cat:(expCats[0]||""),proof:"사진영수증",date:"",vendor:"",desc:"",amount:"",img:dataUrl}
-      : {pay:"개인카드",mode:"",proof:"사진영수증",date:"",from:"",to:"",work:"",fare:"",img:dataUrl};
+      ? {pay:"개인카드",cat:(expCats[0]||""),proof:"사진영수증",date:"",vendor:"",desc:"",amount:"",imgs:urls.slice(0,5)}
+      : {pay:"개인카드",mode:"",proof:"사진영수증",date:"",from:"",to:"",work:"",fare:"",imgs:urls.slice(0,5)};
+    if(urls.length>5) alert(`한 건당 최대 5장이에요. ${urls.length-5}장은 제외됐어요.`);
     e[key].push(base); saveExpenses(); renderExpTables();
     const idx=e[key].length-1;
-    const res=await ocrReceipt(dataUrl);
+    const res=await ocrReceipt(urls[0]);
     const row=e[key][idx];
     if(row){ if(res.amount){ if(tg.kind==="item") row.amount=res.amount; else row.fare=res.amount; } if(res.date) row.date=res.date; saveExpenses(); renderExpTables(); }
     ocrFeedback(res);
     return;
   }
-  const row=e[key][tg.idx]; if(!row) return;
-  row.img=dataUrl; if(!row.proof||row.proof==="없음") row.proof="사진영수증";
+  const row=e[key][tg.idx]; if(!row) return; if(!Array.isArray(row.imgs)) row.imgs=[];
+  const space=5-row.imgs.length; const added=urls.slice(0,Math.max(0,space));
+  row.imgs.push(...added);
+  if(urls.length>space) alert(`한 건당 최대 5장이에요. ${urls.length-Math.max(0,space)}장은 제외됐어요.`);
+  if(!row.proof||row.proof==="없음") row.proof="사진영수증";
   saveExpenses(); renderExpTables();
-  if(tg.ocr){ const res=await ocrReceipt(dataUrl); const r2=e[key][tg.idx]; if(r2){ if(res.amount && !r2.amount && !r2.fare){ if(tg.kind==="item") r2.amount=res.amount; else r2.fare=res.amount; } if(res.date && !r2.date) r2.date=res.date; saveExpenses(); renderExpTables(); } ocrFeedback(res); }
+  if(tg.ocr && added[0]){ const res=await ocrReceipt(added[0]); const r2=e[key][tg.idx]; if(r2){ if(res.amount && !r2.amount && !r2.fare){ if(tg.kind==="item") r2.amount=res.amount; else r2.fare=res.amount; } if(res.date && !r2.date) r2.date=res.date; saveExpenses(); renderExpTables(); } ocrFeedback(res); }
 };
 
 /* --- 엑셀 내보내기 (ExcelJS, 영수증 이미지 포함) --- */
@@ -1355,8 +1377,8 @@ async function exportExpenseExcel(){
     if(e.items.length>MAXI || e.transport.length>MAXT) alert(`양식 한도(비용 ${MAXI}건·교통 ${MAXT}건)를 초과한 내역은 엑셀에 포함되지 않았어요.`);
     // 영수증 이미지: 폼 아래에 첨부
     const imgs=[];
-    e.items.forEach((it,i)=>{ if(it.img) imgs.push({cap:`[비용 ${i+1}] ${it.cat||""} ${won(it.amount)}원`, img:it.img}); });
-    e.transport.forEach((t,i)=>{ if(t.img) imgs.push({cap:`[교통 ${i+1}] ${t.mode||""} ${won(t.fare)}원`, img:t.img}); });
+    e.items.forEach((it,i)=>{ (it.imgs||[]).forEach((src,j)=> imgs.push({cap:`[비용 ${i+1}-${j+1}] ${it.cat||""} ${won(it.amount)}원`, img:src})); });
+    e.transport.forEach((t,i)=>{ (t.imgs||[]).forEach((src,j)=> imgs.push({cap:`[교통 ${i+1}-${j+1}] ${t.mode||""} ${won(t.fare)}원`, img:src})); });
     if(imgs.length){
       let r=33; ws.getCell("B"+r).value="■ 영수증 증빙"; ws.getCell("B"+r).font={bold:true}; r+=1;
       for(const im of imgs){
@@ -1377,6 +1399,7 @@ fillHourSelects();
 loadSettingsForm();
 setDate(fmtDate(new Date()));
 renderTimer();
+loadExpenses().then(()=>{ if(document.getElementById("view-expense").classList.contains("active")) renderExpense(); });
 </script>
 </body>
 </html>
