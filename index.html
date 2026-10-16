@@ -111,7 +111,6 @@
   .dot.meeting { background: var(--meeting); }
   .dot.break { background: var(--break); }
   .dot.leave { background: var(--leave); }
-  .dot.erase { background: repeating-linear-gradient(45deg,#333,#333 3px,#555 3px,#555 6px); }
 
   /* time grid */
   .daybar { display:flex; align-items:center; gap:10px; margin-bottom:14px; flex-wrap: wrap; }
@@ -263,7 +262,6 @@
         <div class="pal active" data-mode="work"><span class="dot work"></span>근무</div>
         <div class="pal" data-mode="break"><span class="dot break"></span>휴게/점심</div>
         <div class="pal" data-mode="leave"><span class="dot leave"></span>연차</div>
-        <div class="pal" data-mode="erase"><span class="dot erase"></span>지우기</div>
         <span class="spacer"></span>
         <span class="legendmini">블럭을 클릭/드래그해서 칠하세요 · 한 칸 = 5분 · 다시 누르면 취소 · 12~13시는 점심(휴게 고정, 칠하기 불가)</span>
       </div>
@@ -412,7 +410,6 @@
       <h2>💳 개인비용 청구 <span class="pill">엑셀 양식</span></h2>
       <div class="row" style="margin-bottom:12px">
         <label class="field">청구 월<input type="month" id="expMonth" /></label>
-        <label class="field">부서<input type="text" id="expDept" placeholder="더블유캠프" /></label>
         <label class="field">성명<input type="text" id="expName" placeholder="이름" /></label>
         <span class="spacer"></span>
         <button class="btn sm" id="expSave">💾 저장</button>
@@ -587,8 +584,8 @@ function attachPaint(el, dateStr, key){
   el.addEventListener("mousedown", e=>{
     e.preventDefault();
     const cur = (blocks[dateStr]||{})[key];
-    // 같은 모드로 칠해진 칸을 다시 누르면 해제(토글). 지우기 모드는 항상 해제.
-    paintAction = (paintMode==="erase" || cur===paintMode) ? "remove" : "set";
+    // 같은 모드로 칠해진 칸을 다시 누르면 해제(토글).
+    paintAction = (cur===paintMode) ? "remove" : "set";
     isPainting=true; applyPaint(dateStr, key, el);
   });
   el.addEventListener("mouseenter", ()=>{ if(isPainting) applyPaint(dateStr, key, el); });
@@ -1236,7 +1233,6 @@ function renderExpTables(){
 function renderExpense(){
   document.getElementById("expMonth").value=expMonth;
   const e=getExp();
-  document.getElementById("expDept").value=e.dept||"";
   document.getElementById("expName").value=e.name||"";
   renderExpTables();
 }
@@ -1261,7 +1257,6 @@ function renderExpense(){
   });
 });
 document.getElementById("expMonth").onchange=e=>{ expMonth=e.target.value||ymNow(); renderExpense(); };
-document.getElementById("expDept").oninput=e=>{ getExp().dept=e.target.value; saveExpenses(); };
 document.getElementById("expName").oninput=e=>{ getExp().name=e.target.value; saveExpenses(); };
 document.getElementById("addItem").onclick=()=>{ getExp().items.push({pay:"개인카드",cat:(expCats[0]||""),proof:"없음",date:"",vendor:"",desc:"",amount:"",img:""}); saveExpenses(); renderExpTables(); };
 document.getElementById("addTransport").onclick=()=>{ getExp().transport.push({pay:"개인카드",mode:"",proof:"없음",date:"",from:"",to:"",work:"",fare:"",img:""}); saveExpenses(); renderExpTables(); };
