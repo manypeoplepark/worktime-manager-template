@@ -126,7 +126,8 @@
   .blk.break { background: var(--break); border-color: var(--break); }
   .blk.leave { background: var(--leave); border-color: var(--leave); }
   .blk:hover { filter: brightness(1.2); }
-  .blk.lunch, .wcell.lunch { opacity: .5; }
+  .blk.lunch, .wcell.lunch { cursor: default; opacity: .55; }
+  .blk.lunch:hover { filter: none; }
   .minhead { margin-bottom: 6px; }
   .mlbl { flex:1; text-align:center; font-size:10px; color:var(--muted); font-variant-numeric:tabular-nums; }
   .mlbl.q { color:var(--text); font-weight:600; }       /* 0/15/30/45분 강조 */
@@ -244,7 +245,7 @@
         <div class="pal" data-mode="leave"><span class="dot leave"></span>연차</div>
         <div class="pal" data-mode="erase"><span class="dot erase"></span>지우기</div>
         <span class="spacer"></span>
-        <span class="legendmini">블럭을 클릭/드래그해서 칠하세요 · 한 칸 = 5분 · 다시 누르면 취소 · 12~13시는 점심(기본 휴게, 일했으면 덮어쓰기 가능)</span>
+        <span class="legendmini">블럭을 클릭/드래그해서 칠하세요 · 한 칸 = 5분 · 다시 누르면 취소 · 12~13시는 점심(휴게 고정, 칠하기 불가)</span>
       </div>
 
       <!-- 일간 -->
@@ -446,6 +447,12 @@ const DEFAULTS = { hireDate:"", weekly:40, daily:8, startHour:6, endHour:24,
 const DEFAULT_LEAVE_TEXT = "";
 let settings = Object.assign({}, DEFAULTS, LS.get("wtm_settings", {}));
 let blocks = LS.get("wtm_blocks", {}); // { 'YYYY-MM-DD': { '08:00':'work', ... } }
+// 점심 고정: 과거에 12시대(12:00~12:55)에 잘못 저장된 블럭 정리
+(function cleanupLunch(){
+  let changed=false;
+  for(const d in blocks){ for(const k in blocks[d]){ if(k.startsWith("12:")){ delete blocks[d][k]; changed=true; } } }
+  if(changed){ try{ localStorage.setItem("wtm_blocks", JSON.stringify(blocks)); }catch(e){} }
+})();
 // 연차 내역이 비어있으면 위 기본값을 채워 넣음
 if(!settings.leaveText){ settings.leaveText = DEFAULT_LEAVE_TEXT; saveSettings(); }
 
@@ -462,25 +469,24 @@ function slotKey(h,m){ return `${pad(h)}:${pad(m)}`; }
 function minutesToHm(min){ const h=Math.floor(min/60), m=min%60; return `${h}시간 ${m}분`; }
 function minutesToHmShort(min){ const h=Math.floor(min/60), m=min%60; return m? `${h}.${Math.round(m/6)}h` : `${h}h`; }
 
-/* 하루 근무/회의 분 계산 (입력한 그대로 집계) */
+/* 하루 근무/회의 분 계산 (점심 12~13시 고정 제외) */
 function workedMinutes(dateStr){
   const day = blocks[dateStr] || {};
+  const lunchPrefix = pad(LUNCH_HOUR)+":";
   let count = 0;
-  for(const k in day){ if(day[k]==="work" || day[k]==="meeting") count++; }
+  for(const k in day){ if((day[k]==="work" || day[k]==="meeting") && !k.startsWith(lunchPrefix)) count++; }
   return count*SLOT_MIN;
 }
 function leaveMinutes(dateStr){
   const day = blocks[dateStr] || {};
-  return Object.keys(day).filter(k=>day[k]==="leave").length*SLOT_MIN;
+  const lunchPrefix = pad(LUNCH_HOUR)+":";
+  return Object.keys(day).filter(k=>day[k]==="leave" && !k.startsWith(lunchPrefix)).length*SLOT_MIN;
 }
 function breakMinutes(dateStr){
   const day = blocks[dateStr] || {};
   const lunchPrefix = pad(LUNCH_HOUR)+":";
-  let c=0, lunchSet=0;
-  for(const k in day){ if(day[k]==="break") c++; if(k.startsWith(lunchPrefix)) lunchSet++; }
-  // 점심(12~13시) 중 아직 입력 안 한 칸은 기본 휴게로 간주 (입력하면 그 값 우선)
-  const virtualLunch = Math.max(0, (60/SLOT_MIN) - lunchSet);
-  return (c + virtualLunch)*SLOT_MIN;
+  let c=0; for(const k in day){ if(day[k]==="break" && !k.startsWith(lunchPrefix)) c++; }
+  return c*SLOT_MIN + 60; // 점심 1시간 고정
 }
 
 /* ---------------- 탭 ---------------- */
@@ -555,10 +561,8 @@ function renderGrid(){
     for(let h=settings.startHour; h<settings.endHour; h++){
       const key = slotKey(h,m);
       const blk = document.createElement("div"); blk.className="blk"; blk.dataset.key=key; blk.title=key;
-      const v = day[key];
-      if(v){ blk.classList.add(v); }
-      else if(h===LUNCH_HOUR){ blk.classList.add("break","lunch"); blk.title=key+" · 점심(기본, 수정 가능)"; }
-      attachPaint(blk, currentDate, key);
+      if(h===LUNCH_HOUR){ blk.classList.add("break","lunch"); blk.title=key+" · 점심(고정)"; } // 점심 고정: 칠하기 불가
+      else { const v = day[key]; if(v) blk.classList.add(v); attachPaint(blk, currentDate, key); }
       wrap.appendChild(blk);
     }
     row.appendChild(wrap); grid.appendChild(row);
@@ -609,10 +613,8 @@ function renderWeekView(){
       for(let m=0; m<60; m+=SLOT_MIN){
         const key = slotKey(h,m);
         const cell = document.createElement("div"); cell.className="wcell";
-        const t = dayData[key];
-        if(t){ cell.classList.add(t); }
-        else if(h===LUNCH_HOUR){ cell.classList.add("break","lunch"); }
-        attachPaint(cell, ds, key);
+        if(h===LUNCH_HOUR){ cell.classList.add("break","lunch"); } // 점심 고정: 칠하기 불가
+        else { const t = dayData[key]; if(t) cell.classList.add(t); attachPaint(cell, ds, key); }
         hr.appendChild(cell);
       }
       col.appendChild(hr);
