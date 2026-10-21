@@ -280,6 +280,16 @@
           <button class="btn ghost sm" id="undoLeaveDay" hidden>연차 일괄 지정 취소</button>
           <button class="btn ghost sm" id="clearDay">이 날짜 전체 지우기</button>
         </div>
+        <div class="daybar" style="margin-top:-4px">
+          <span style="font-size:12px;color:var(--muted)">⏱ 시간으로 채우기:</span>
+          <input type="time" id="wkStart" value="09:00" step="300" style="width:108px" />
+          <span style="color:var(--muted)">~</span>
+          <input type="time" id="wkEnd" value="18:00" step="300" style="width:108px" />
+          <button class="btn sm" id="fillWork">이 날 채우기</button>
+          <span class="legendmini">점심 12~13시는 자동 제외</span>
+          <span class="spacer"></span>
+          <button class="btn ghost sm" id="fillMonthWeekdays" title="이번 달 평일(월~금)을 9-6 근무로 채웁니다. 이미 입력된 날은 그대로 둬요.">📅 이번 달 평일 9-6 채우기</button>
+        </div>
         <div class="grid" id="grid"></div>
       </div>
 
@@ -782,6 +792,31 @@ document.getElementById("fillLeaveDay").onclick = ()=>{
 };
 document.getElementById("clearDay").onclick = ()=>{
   if(confirm(currentDate+" 의 모든 블럭을 지울까요?")){ delete blocks[currentDate]; saveBlocks(); renderGrid(); renderDayStats(); }
+};
+/* 시간 범위로 근무 블럭 채우기 (점심 12~13시 제외) */
+function fillWorkRange(dateStr, startHM, endHM){
+  const sp=(startHM||"09:00").split(":").map(Number), ep=(endHM||"18:00").split(":").map(Number);
+  const sMin=sp[0]*60+sp[1], eMin=ep[0]*60+ep[1]; if(eMin<=sMin) return 0;
+  if(!blocks[dateStr]) blocks[dateStr]={};
+  let n=0;
+  for(let t=sMin; t<eMin; t+=SLOT_MIN){ const h=Math.floor(t/60), m=t%60; if(h===LUNCH_HOUR) continue; if(h>=settings.startHour && h<settings.endHour){ blocks[dateStr][slotKey(h,m)]="work"; n++; } }
+  saveBlocks(); return n;
+}
+document.getElementById("fillWork").onclick = ()=>{
+  fillWorkRange(currentDate, document.getElementById("wkStart").value, document.getElementById("wkEnd").value);
+  renderGrid(); renderDayStats();
+};
+document.getElementById("fillMonthWeekdays").onclick = ()=>{
+  const [y,mo]=currentDate.split("-").map(Number); const last=new Date(y,mo,0).getDate(); let filled=0;
+  for(let d=1; d<=last; d++){
+    const dow=new Date(y,mo-1,d).getDay(); if(dow<1||dow>5) continue; // 평일만
+    const ds=`${y}-${pad(mo)}-${pad(d)}`; const day=blocks[ds]||{};
+    if(Object.values(day).some(v=>v==="work"||v==="meeting")) continue; // 이미 근무 있으면 유지
+    fillWorkRange(ds,"09:00","18:00"); filled++;
+  }
+  renderGrid(); renderDayStats();
+  if(trackView==="week") renderWeekView(); if(trackView==="month") renderMonthView();
+  alert(`이번 달(${mo}월) 평일 ${filled}일을 9-6 근무로 채웠어요. (이미 입력된 날은 그대로 유지)`);
 };
 
 /* ---------------- 타이머 ---------------- */
@@ -1317,7 +1352,7 @@ document.getElementById("photoInput").onchange=async ev=>{
   const files=Array.from(ev.target.files||[]); const tg=photoTarget; photoTarget=null;
   if(!files.length||!tg) return;
   setOcr("🖼 사진 처리 중…");
-  const urls=[]; for(const f of files){ try{ urls.push(await compressImage(f,1000,0.55)); }catch(e){} }
+  const urls=[]; for(const f of files){ try{ urls.push(await compressImage(f,1500,0.8)); }catch(e){} }
   setOcr("");
   if(!urls.length){ alert("이미지를 읽지 못했어요."); return; }
   const e=getExp(); const key=(tg.kind==="item")?"items":"transport";
@@ -1375,16 +1410,31 @@ async function exportExpenseExcel(){
     // 합계는 확정값으로 (뷰어 재계산 의존 제거)
     ws.getCell("M22").value=isum; ws.getCell("M29").value=tsum; ws.getCell("M30").value=total;
     if(e.items.length>MAXI || e.transport.length>MAXT) alert(`양식 한도(비용 ${MAXI}건·교통 ${MAXT}건)를 초과한 내역은 엑셀에 포함되지 않았어요.`);
-    // 영수증 이미지: 폼 아래에 첨부
-    const imgs=[];
-    e.items.forEach((it,i)=>{ (it.imgs||[]).forEach((src,j)=> imgs.push({cap:`[비용 ${i+1}-${j+1}] ${it.cat||""} ${won(it.amount)}원`, img:src})); });
-    e.transport.forEach((t,i)=>{ (t.imgs||[]).forEach((src,j)=> imgs.push({cap:`[교통 ${i+1}-${j+1}] ${t.mode||""} ${won(t.fare)}원`, img:src})); });
-    if(imgs.length){
-      let r=33; ws.getCell("B"+r).value="■ 영수증 증빙"; ws.getCell("B"+r).font={bold:true}; r+=1;
-      for(const im of imgs){
-        ws.getCell("B"+r).value=im.cap;
-        try{ const id=wb.addImage({base64:im.img,extension:"jpeg"}); ws.addImage(id,{tl:{col:1,row:r},ext:{width:170,height:170}}); }catch(err){}
-        r+=9;
+    // 영수증: 날짜별 시트로 분리 (비율 유지, 안 찌그러짐)
+    const groups={};
+    const addG=(date,cap,src)=>{ const k=(date&&date.length)?date:"날짜미정"; (groups[k]=groups[k]||[]).push({cap,img:src}); };
+    e.items.forEach((it,i)=>(it.imgs||[]).forEach((src,j)=>addG(it.date,`비용 ${i+1}-${j+1} · ${it.cat||""} · ${won(it.amount)}원`,src)));
+    e.transport.forEach((t,i)=>(t.imgs||[]).forEach((src,j)=>addG(t.date,`교통 ${i+1}-${j+1} · ${t.mode||""} · ${won(t.fare)}원`,src)));
+    const imgDims=(src)=>new Promise(res=>{ const im=new Image(); im.onload=()=>res({w:im.naturalWidth||im.width||300,h:im.naturalHeight||im.height||400}); im.onerror=()=>res({w:300,h:400}); im.src=src; });
+    for(const date of Object.keys(groups).sort()){
+      const base = date==="날짜미정" ? "영수증-날짜미정" : ("영수증 "+date.slice(5)); // MM-DD
+      let nm=base, k=2; while(wb.getWorksheet(nm)){ nm=base+"("+(k++)+")"; }
+      const ws2=wb.addWorksheet(nm);
+      ws2.getColumn(1).width=2.5; ws2.getColumn(2).width=54;
+      ws2.pageSetup={margins:{left:0.4,right:0.4,top:0.5,bottom:0.5,header:0.3,footer:0.3}, fitToPage:true, fitToWidth:1, fitToHeight:0};
+      let rr=1;
+      ws2.getCell("B"+rr).value = (date==="날짜미정"?"영수증 증빙 (날짜 미지정)":("영수증 증빙 — "+date));
+      ws2.getCell("B"+rr).font={bold:true,size:13}; rr+=2;
+      for(const g of groups[date]){
+        ws2.getCell("B"+rr).value=g.cap; ws2.getCell("B"+rr).font={bold:true,size:10}; rr+=1;
+        try{
+          const {w,h}=await imgDims(g.img);
+          const maxW=380, maxH=560, sc=Math.min(maxW/w, maxH/h, 1);
+          const dw=Math.round(w*sc), dh=Math.round(h*sc);
+          const id=wb.addImage({base64:g.img, extension:"jpeg"});
+          ws2.addImage(id, {tl:{col:1, row:rr-1+0.1}, ext:{width:dw, height:dh}});
+          rr += Math.ceil(dh/18) + 2;
+        }catch(err){ rr+=2; }
       }
     }
     const out=await wb.xlsx.writeBuffer();
