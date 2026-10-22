@@ -238,14 +238,19 @@
   <!-- ===== 타임블럭 ===== -->
   <section class="view active" id="view-track">
     <div class="card">
-      <h2>⏱ 빠른 타이머 (출근/퇴근)</h2>
+      <h2>🏢 오늘 출근</h2>
       <div class="row">
-        <div class="timer-big" id="timerDisplay">00:00:00</div>
+        <div>
+          <div style="font-size:12px;color:var(--muted)">오늘</div>
+          <div id="todayLabel" style="font-size:22px;font-weight:700;letter-spacing:-0.4px">—</div>
+        </div>
         <span class="spacer"></span>
-        <button class="btn" id="timerToggle">출근 (시작)</button>
-        <button class="btn ghost" id="timerStamp">현재까지 블럭에 반영</button>
+        <label class="field">출근 시간
+          <input type="time" id="clockIn" value="09:00" step="300" style="width:132px;font-size:17px" />
+        </label>
+        <button class="btn" id="clockInFill" style="font-size:15px;padding:12px 18px">출근 · 8시간 채우기</button>
       </div>
-      <p class="note" style="margin-bottom:0">시작을 누르면 실시간으로 시간이 흐르고, "블럭에 반영"을 누르면 시작~현재 구간을 아래 타임블럭에 <b>근무</b>로 자동 표시합니다. (반자동 기록용)</p>
+      <p class="note" style="margin-bottom:0">출근 시간을 넣고 누르면 <b>오늘 날짜</b>에 하루 소정근로시간만큼 근무가 자동으로 채워져요 (점심 12~13시는 자동 제외).</p>
     </div>
 
     <div class="card">
@@ -819,48 +824,34 @@ document.getElementById("fillMonthWeekdays").onclick = ()=>{
   alert(`이번 달(${mo}월) 평일 ${filled}일을 9-6 근무로 채웠어요. (이미 입력된 날은 그대로 유지)`);
 };
 
-/* ---------------- 타이머 ---------------- */
-let timerStart = LS.get("wtm_timerStart", null);
-let timerInt = null;
-function renderTimer(){
-  const disp = document.getElementById("timerDisplay");
-  const btn = document.getElementById("timerToggle");
-  if(timerStart){
-    btn.textContent = "퇴근 (정지)"; btn.classList.remove("ghost");
-    const upd = ()=>{
-      const sec = Math.floor((Date.now()-timerStart)/1000);
-      disp.textContent = `${pad(Math.floor(sec/3600))}:${pad(Math.floor(sec%3600/60))}:${pad(sec%60)}`;
-    };
-    upd(); clearInterval(timerInt); timerInt=setInterval(upd,1000);
-  } else {
-    btn.textContent = "출근 (시작)";
-    clearInterval(timerInt);
-    document.getElementById("timerDisplay").textContent="00:00:00";
+/* ---------------- 오늘 출근 ---------------- */
+function fillWorkHours(dateStr, startHM, hours){
+  const sp=(startHM||"09:00").split(":").map(Number); let t=sp[0]*60+sp[1];
+  const need=Math.round((hours||8)*60/SLOT_MIN);
+  if(!blocks[dateStr]) blocks[dateStr]={};
+  let placed=0, guard=0;
+  while(placed<need && guard < 24*60/SLOT_MIN){
+    const h=Math.floor(t/60), m=t%60;
+    if(h>=settings.startHour && h<settings.endHour && h!==LUNCH_HOUR){ blocks[dateStr][slotKey(h,m)]="work"; placed++; }
+    t+=SLOT_MIN; guard++;
   }
+  saveBlocks(); return placed;
 }
-document.getElementById("timerToggle").onclick = ()=>{
-  if(timerStart){ stampTimerToBlocks(); timerStart=null; }
-  else { timerStart = Date.now(); }
-  LS.set("wtm_timerStart", timerStart);
-  renderTimer();
+function renderClockIn(){
+  const d=new Date(), days=["일","월","화","수","목","금","토"];
+  const lbl=document.getElementById("todayLabel"); if(lbl) lbl.textContent=`${fmtDate(d)} (${days[d.getDay()]})`;
+  const b=document.getElementById("clockInFill"); if(b) b.textContent=`출근 · ${settings.daily||8}시간 채우기`;
+  const ci=document.getElementById("clockIn"); if(ci) ci.value=LS.get("wtm_clockIn","09:00");
+}
+document.getElementById("clockInFill").onclick = ()=>{
+  const start=document.getElementById("clockIn").value||"09:00";
+  LS.set("wtm_clockIn", start);
+  const today=fmtDate(new Date());
+  const n=fillWorkHours(today, start, settings.daily||8);
+  if(typeof setTrackView==="function") setTrackView("day");
+  setDate(today);
+  flash(`오늘(${today}) 출근 ${start} → ${ (n*SLOT_MIN/60) }시간 근무 채웠어요.`);
 };
-document.getElementById("timerStamp").onclick = ()=> stampTimerToBlocks();
-function stampTimerToBlocks(){
-  if(!timerStart){ alert("먼저 출근(시작)을 눌러주세요."); return; }
-  const start = new Date(timerStart), end = new Date();
-  const dStr = fmtDate(start);
-  if(!blocks[dStr]) blocks[dStr]={};
-  // 시작~현재를 10분 블럭에 근무로 표시
-  let t = new Date(start); t.setSeconds(0,0); t.setMinutes(Math.floor(t.getMinutes()/SLOT_MIN)*SLOT_MIN);
-  while(t <= end){
-    const h=t.getHours(), m=t.getMinutes();
-    if(h>=settings.startHour && h<settings.endHour) blocks[dStr][slotKey(h,m)]="work";
-    t = new Date(t.getTime()+SLOT_MIN*60000);
-  }
-  saveBlocks();
-  if(dStr===currentDate){ renderGrid(); renderDayStats(); }
-  flash("timer 구간을 타임블럭에 반영했어요.");
-}
 function flash(msg){
   const m=document.getElementById("setMsg");
   // lightweight toast via alert-free: use title bar sub
@@ -1194,8 +1185,8 @@ document.getElementById("resetAll").onclick=()=>{
     localStorage.removeItem("wtm_settings");
     localStorage.removeItem("wtm_blocks");
     localStorage.removeItem("wtm_timerStart");
-    settings=Object.assign({},DEFAULTS); blocks={}; timerStart=null;
-    loadSettingsForm(); setDate(fmtDate(new Date())); renderTimer();
+    settings=Object.assign({},DEFAULTS); blocks={};
+    loadSettingsForm(); setDate(fmtDate(new Date())); renderClockIn();
   }
 };
 
@@ -1448,7 +1439,7 @@ async function exportExpenseExcel(){
 fillHourSelects();
 loadSettingsForm();
 setDate(fmtDate(new Date()));
-renderTimer();
+renderClockIn();
 loadExpenses().then(()=>{ if(document.getElementById("view-expense").classList.contains("active")) renderExpense(); });
 </script>
 </body>
