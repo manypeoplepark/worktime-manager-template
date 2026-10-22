@@ -1003,18 +1003,13 @@ function parseLeaveLine(line){
 function calcUsage(){
   const name = (settings.myName||"").trim();
   const start = settings.leaveStart ? parseDate(settings.leaveStart) : null;
-  const end = new Date(); end.setHours(23,59,59,0);
   const lines = (settings.leaveText||"").split(/\n/).map(l=>l.trim()).filter(Boolean);
   let items=[], total=0;
   for(const line of lines){
     if(name && !line.includes(name)) continue;        // 이름 필터
     const p = parseLeaveLine(line);
     if(p.days<=0) continue;                            // 연차 키워드 없는 줄 skip
-    if(p.date){
-      const d = parseDate(p.date);
-      if(start && d < start) continue;                 // 시작일 이전 제외
-      if(d > end) continue;                            // 미래 제외
-    }
+    if(p.date && start){ const d = parseDate(p.date); if(d < start) continue; } // 시작일 이전만 제외 (예정 연차 포함)
     items.push(p); total += p.days;
   }
   items.sort((a,b)=> (a.date||"").localeCompare(b.date||""));
@@ -1072,14 +1067,18 @@ function fallbackCopy(txt, done){
 document.getElementById("copyPrompt").onclick = ()=> copyToClipboard(buildClaudePrompt(), document.getElementById("copyPrompt"));
 document.getElementById("usageName").addEventListener("input", refreshPrompt);
 document.getElementById("usageStart").addEventListener("input", refreshPrompt);
-document.getElementById("calcUsage").onclick = ()=>{
+function commitUsageInputs(){
   settings.myName = document.getElementById("usageName").value;
   settings.leaveStart = document.getElementById("usageStart").value;
   settings.allowance = parseFloat(document.getElementById("usageAllow").value)||0;
   settings.leaveText = document.getElementById("leaveText").value;
   saveSettings();
   renderUsage();
-};
+}
+document.getElementById("calcUsage").onclick = commitUsageInputs;
+["usageName","usageStart","usageAllow","leaveText"].forEach(id=>{
+  const el=document.getElementById(id); if(el) el.addEventListener("input", commitUsageInputs);
+});
 
 function renderLeave(){
   // 사용 현황 입력값 채우기
